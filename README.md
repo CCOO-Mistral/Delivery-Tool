@@ -54,8 +54,10 @@ Environment variables:
 ## Design notes
 
 - Roboto Condensed Light (Google Fonts), dark navy + green accent, Climeon-style.
-- Drop the official logo into `static/img/logo.svg` and faded customer photos into
-  `static/img/bg.jpg` (used at low opacity as the page background).
+- The official white Climeon logo is included at `static/img/logo.png` and shown in
+  the top bar on the dark navy background.
+- Faded customer photos: drop them into `static/img/bg.jpg` (used at low opacity as
+  the page background).
 
 ## Deployment note
 

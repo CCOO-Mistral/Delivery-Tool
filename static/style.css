@@ -33,6 +33,7 @@ body {
   padding: 0 16px; box-shadow: 0 2px 8px rgba(0,0,0,.25);
 }
 #logo { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 20px; letter-spacing: 2px; font-weight: 400; }
+#logo .logo-img { height: 22px; width: auto; display: block; }
 #logo em { font-style: normal; font-size: 13px; color: var(--accent); letter-spacing: 1px; }
 #topbar-right { display: flex; align-items: center; gap: 10px; }
 #user-label { font-size: 13px; color: #c9d6e8; cursor: pointer; }
