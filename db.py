@@ -175,6 +175,35 @@ CREATE TABLE IF NOT EXISTS audit (
     changed_by TEXT DEFAULT '',
     changed_at TEXT DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS wiki_chapters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    source_file_id INTEGER,
+    content TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS class_checklist_standard (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stage INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    timing TEXT DEFAULT '',
+    owner TEXT DEFAULT '',
+    touchpoint TEXT DEFAULT '',
+    exit_criteria TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS project_class_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    stage INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    timing TEXT DEFAULT '',
+    owner TEXT DEFAULT '',
+    touchpoint TEXT DEFAULT '',
+    exit_criteria TEXT DEFAULT '',
+    status TEXT DEFAULT 'Not started',
+    comment TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_class_project ON project_class_items(project_id);
 CREATE INDEX IF NOT EXISTS idx_wbs_project ON wbs(project_id);
 CREATE INDEX IF NOT EXISTS idx_opl_project ON opl(project_id);
 CREATE INDEX IF NOT EXISTS idx_audit_project ON audit(project_id);
@@ -226,5 +255,38 @@ def init_db():
         ]
         conn.executemany(
             "INSERT INTO lazydog_links(name, description, location, link) VALUES (?,?,?,?)", seeds)
+    if conn.execute("SELECT COUNT(*) FROM class_checklist_standard").fetchone()[0] == 0:
+        stages = [
+            (1, "Contract award / kick-off", "Within 10 working days of award", "Delivery PM",
+             "Confirm society, office, rule edition, notation, essential-service status, PED position",
+             "Society, edition and PED position written and acknowledged by the yard; every component has a CL, piping class and PED category"),
+            (2, "Design and drawing approval", "Submit >= 12 weeks before first fabrication hold point", "Engineering",
+             "PDA or drawing submission; written replies to every comment",
+             "Approval letter or PDA received; every comment closed in writing; approval log updated"),
+            (3, "Procurement", "PO issued with design; certificates ordered with the part", "Procurement",
+             "Flow-down of class requirements to suppliers",
+             "Every PO line in Annex A carries society, CL, material certificate and H/W points; each supplier has confirmed acceptance in writing"),
+            (4, "Fabrication and in-process inspection", "Surveyor notified >= 10 working days before each H point (>= 15 abroad)", "Quality",
+             "Surveyor attends H points: material ID and testing, welding, NDT, hydrotest on Class I/II and CL5 items",
+             "Every H point released in writing; NDT and hydrotest accepted; nonconformances closed or concession approved"),
+            (5, "FAT", "Procedure to class >= 20 working days before; surveyor booked >= 15 working days before", "Delivery PM",
+             "Surveyor witnesses CL5 items and the unit FAT, incl. CBS fault simulation where Cat II/III",
+             "Surveyor report signed; class punch items assigned with dates; no open H point"),
+            (6, "Pre-shipment documentation", "Dossier complete >= 10 working days before dispatch", "Quality",
+             "Class review of dossier where required",
+             "Dossier passes the certificate acceptance checklist (C-5) for 100% of Annex A lines; no missing certificate"),
+            (7, "Installation and onboard survey", "Notify yard of HP300 survey points at installation planning", "Delivery PM with yard",
+             "Surveyor verifies installed IDs and serials against the dossier",
+             "Serials match the dossier; deviations approved by class; surveyor, office and date recorded"),
+            (8, "Commissioning and sea trial", "Commissioning procedure to class >= 15 working days before", "Delivery PM",
+             "Function test of safety systems (relief valves, gas detection, shutdowns); CBS integration tests; performance at sea trial",
+             "All safety functions tested and witnessed; findings answered in writing"),
+            (9, "Final certification / close-out", "Within 20 working days of sea trial", "Delivery PM",
+             "Class issues unit certificate / survey report; open conditions closed",
+             "No open class condition, or each open condition has an owner, a date and the owner/yard informed"),
+        ]
+        conn.executemany(
+            "INSERT INTO class_checklist_standard(stage, title, timing, owner, touchpoint, exit_criteria)"
+            " VALUES (?,?,?,?,?,?)", stages)
     conn.commit()
     conn.close()

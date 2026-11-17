@@ -3,6 +3,9 @@ import hmac
 import json
 import os
 import re
+import shutil
+import zipfile
+import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
 
 from flask import Flask, jsonify, request, send_from_directory, abort
@@ -27,6 +30,34 @@ REPLACEMENT = "Process Media"
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
 db.init_db()
+
+
+def seed_library():
+    """Import any files in library-seed/ into the Library (and as wiki chapters)
+    on first start, so shipped standards are available immediately."""
+    seed_dir = os.path.join(BASE_DIR, "library-seed")
+    if not os.path.isdir(seed_dir):
+        return
+    conn = db.get_db()
+    if conn.execute("SELECT COUNT(*) FROM library_files").fetchone()[0] > 0:
+        conn.close()
+        return
+    for fn in sorted(os.listdir(seed_dir)):
+        full = os.path.join(seed_dir, fn)
+        if not os.path.isfile(full):
+            continue
+        stored = "seed_" + re.sub(r"[^A-Za-z0-9._-]", "_", fn)
+        shutil.copy(full, os.path.join(UPLOAD_DIR, stored))
+        size = os.path.getsize(os.path.join(UPLOAD_DIR, stored))
+        cur = conn.execute(
+            "INSERT INTO library_files(filename, stored_name, uploaded_by, size) VALUES (?,?,?,?)",
+            (fn, stored, "system", size))
+        content = extract_text(fn, full)
+        if content:
+            conn.execute("INSERT INTO wiki_chapters(title, source_file_id, content) VALUES (?,?,?)",
+                         (os.path.splitext(fn)[0], cur.lastrowid, content))
+    conn.commit()
+    conn.close()
 
 
 # ---------------------------------------------------------------- helpers
@@ -99,6 +130,40 @@ def days_between(start, due):
     return None
 
 
+W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def extract_text(filename, path):
+    """Extract readable text from an uploaded library file (docx/txt/md)."""
+    lower = filename.lower()
+    try:
+        if lower.endswith(".docx"):
+            with zipfile.ZipFile(path) as z:
+                root = ET.fromstring(z.read("word/document.xml").decode("utf-8"))
+            lines = []
+            for para in root.iter(W_NS + "p"):
+                style = ""
+                ppr = para.find(W_NS + "pPr")
+                if ppr is not None:
+                    ps = ppr.find(W_NS + "pStyle")
+                    if ps is not None:
+                        style = ps.get(W_NS + "val", "")
+                text = "".join(t.text or "" for t in para.iter(W_NS + "t")).strip()
+                if text:
+                    if style.startswith("Heading"):
+                        level = style.replace("Heading", "") or "1"
+                        lines.append("\n" + "#" * min(int(level) + 1, 6) + " " + text)
+                    else:
+                        lines.append(text)
+            return "\n".join(lines)
+        if lower.endswith((".txt", ".md", ".csv", ".json")):
+            with open(path, encoding="utf-8", errors="replace") as f:
+                return f.read()
+    except Exception:
+        return ""
+    return ""
+
+
 # ---------------------------------------------------------------- static
 
 @app.route("/")
@@ -133,6 +198,8 @@ def wiki():
     links = rows_to_dicts(conn.execute("SELECT * FROM lazydog_links ORDER BY id").fetchall())
     files = rows_to_dicts(conn.execute(
         "SELECT id, filename, uploaded_by, uploaded_at, size FROM library_files ORDER BY id DESC").fetchall())
+    chapters = rows_to_dicts(conn.execute(
+        "SELECT id, title, source_file_id, content, created_at FROM wiki_chapters ORDER BY id DESC").fetchall())
     conn.close()
     content = {
         "gdpr": {
@@ -172,7 +239,8 @@ def wiki():
             ],
         },
     }
-    return jsonify({"content": content, "lazydog": links, "library_files": files})
+    return jsonify({"content": content, "lazydog": links, "library_files": files,
+                    "chapters": chapters})
 
 
 @app.route("/api/lazydog", methods=["POST"])
@@ -229,17 +297,26 @@ def library_upload():
         return jsonify({"error": "Empty filename"}), 400
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(f.filename))
     stored = f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{safe}"
-    f.save(os.path.join(UPLOAD_DIR, stored))
-    size = os.path.getsize(os.path.join(UPLOAD_DIR, stored))
+    full = os.path.join(UPLOAD_DIR, stored)
+    f.save(full)
+    size = os.path.getsize(full)
     conn = db.get_db()
     cur = conn.execute(
         "INSERT INTO library_files(filename, stored_name, uploaded_by, size) VALUES (?,?,?,?)",
         (safe, stored, user(), size))
+    fid = cur.lastrowid
+    content = extract_text(safe, full)
+    chapter_id = None
+    if content:
+        cc = conn.execute(
+            "INSERT INTO wiki_chapters(title, source_file_id, content) VALUES (?,?,?)",
+            (os.path.splitext(safe)[0], fid, content))
+        chapter_id = cc.lastrowid
     bump_rev(conn)
-    audit(conn, None, "library", cur.lastrowid, "upload", safe)
+    audit(conn, None, "library", fid, "upload", safe)
     conn.commit()
     conn.close()
-    return jsonify({"id": cur.lastrowid, "filename": safe})
+    return jsonify({"id": fid, "filename": safe, "wiki_chapter_id": chapter_id})
 
 
 @app.route("/api/library/file/<int:fid>")
@@ -266,6 +343,7 @@ def library_delete(fid):
         os.remove(os.path.join(UPLOAD_DIR, row["stored_name"]))
     except OSError:
         pass
+    conn.execute("DELETE FROM wiki_chapters WHERE source_file_id = ?", (fid,))
     conn.execute("DELETE FROM library_files WHERE id = ?", (fid,))
     bump_rev(conn)
     audit(conn, None, "library", fid, "delete", row["filename"])
@@ -328,6 +406,13 @@ def create_project():
         conn.execute("INSERT INTO project_documents(project_id, template_id) VALUES (?,?)",
                      (pid, t["id"]))
 
+    for s in conn.execute("SELECT * FROM class_checklist_standard ORDER BY stage").fetchall():
+        conn.execute(
+            "INSERT INTO project_class_items(project_id, stage, title, timing, owner, touchpoint,"
+            " exit_criteria) VALUES (?,?,?,?,?,?,?)",
+            (pid, s["stage"], s["title"], s["timing"], s["owner"], s["touchpoint"],
+             s["exit_criteria"]))
+
     conn.execute(
         "INSERT INTO budget(project_id, sales_price, services_price, cogs_module, service_costs,"
         " direct_material) VALUES (?,?,?,?,?,?)",
@@ -380,6 +465,14 @@ def update_project(pid):
                 vals.append(d[c])
     if sets:
         conn.execute("UPDATE projects SET " + ",".join(sets) + " WHERE id = ?", vals + [pid])
+        if d.get("delivery_type") in ("Marine", "Retrofit") and conn.execute(
+                "SELECT COUNT(*) FROM project_class_items WHERE project_id = ?", (pid,)).fetchone()[0] == 0:
+            for s in conn.execute("SELECT * FROM class_checklist_standard ORDER BY stage").fetchall():
+                conn.execute(
+                    "INSERT INTO project_class_items(project_id, stage, title, timing, owner,"
+                    " touchpoint, exit_criteria) VALUES (?,?,?,?,?,?,?)",
+                    (pid, s["stage"], s["title"], s["timing"], s["owner"], s["touchpoint"],
+                     s["exit_criteria"]))
         if "contract_date" in d:
             for t in conn.execute(
                     "SELECT milestone_no, week_offset, due_date FROM timeline WHERE project_id = ?",
@@ -773,6 +866,43 @@ def project_document_update(pid, did):
     return jsonify({"ok": True})
 
 
+# ---------------------------------------------------------------- class checklist
+
+@app.route("/api/projects/<int:pid>/class")
+def class_list(pid):
+    conn = db.get_db()
+    p = get_project_or_404(conn, pid)
+    items = rows_to_dicts(conn.execute(
+        "SELECT * FROM project_class_items WHERE project_id = ? ORDER BY stage", (pid,)).fetchall())
+    conn.close()
+    return jsonify({"delivery_type": p["delivery_type"], "items": items})
+
+
+@app.route("/api/projects/<int:pid>/class/<int:cid>", methods=["PUT"])
+def class_update(pid, cid):
+    d = body()
+    conn = db.get_db()
+    get_project_or_404(conn, pid)
+    row = conn.execute("SELECT * FROM project_class_items WHERE id = ? AND project_id = ?",
+                       (cid, pid)).fetchone()
+    if row is None:
+        conn.close()
+        abort(404)
+    sets, vals = [], []
+    for c in ["status", "comment"]:
+        if c in d:
+            sets.append(f"{c} = ?")
+            vals.append(d[c])
+    if sets:
+        conn.execute("UPDATE project_class_items SET " + ",".join(sets) + " WHERE id = ?",
+                     vals + [cid])
+        bump_rev(conn)
+        audit(conn, pid, "class_checklist", cid, "update", f"stage {row['stage']}: {d}")
+        conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+
 # ---------------------------------------------------------------- contacts
 
 @app.route("/api/projects/<int:pid>/contacts")
@@ -829,6 +959,8 @@ def contact_edit(pid, cid):
     conn.close()
     return jsonify({"ok": True})
 
+
+seed_library()
 
 if __name__ == "__main__":
     host = os.environ.get("DELIVERY_HOST", "127.0.0.1")

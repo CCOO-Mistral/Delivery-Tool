@@ -33,9 +33,15 @@ Environment variables:
   payment milestones in, COGS out, cumulative line), Documents (checklist seeded
   from the workbook's document list; new master documents are added to all projects),
   Contacts (sortable/filterable), Change Log (audit trail per project).
-- **Tool level**: Library (password-protected upload/delete; files listed as wiki
-  chapters), Delivery Management Wiki (GDPR checklist, class & CE approval
-  procedures, Lazydog link table) accessible from every page via the Wiki button.
+- **Tool level**: Library (password-protected upload/delete). Every uploaded file
+  automatically becomes a **wiki chapter** (text is extracted from .docx/.txt/.md),
+  shown in the Wiki drawer. Files placed in `library-seed/` are auto-imported into
+  the Library + wiki on first start — the classification/PED working standard ships
+  there.
+- **Class checklist**: projects with delivery type **Marine** or **Retrofit** get a
+  "Class" tab with the 9-stage class/PED certification checklist (from the working
+  standard, Section 6), each stage with timing, owner, class touchpoint, exit criteria,
+  status and comment.
 - **Data rules**: all text input is sanitized so the forbidden company word is
   automatically replaced with "Process Media"; multi-user via a global revision
   counter — every client polls `/api/rev` and refreshes when another user changes
@@ -49,7 +55,8 @@ Environment variables:
 - `gen_seed.py` — regenerates `seed.json` from the workbook
   (`python3 gen_seed.py path/to/workbook.xlsx`)
 - `static/` — single-page frontend (index.html, app.js, style.css)
-- `uploads/` — library files
+- `uploads/` — library files (runtime)
+- `library-seed/` — files auto-imported into the Library + wiki on first start
 
 ## Design notes
 

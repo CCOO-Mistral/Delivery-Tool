@@ -125,32 +125,44 @@ function parseHash() {
   return parts;
 }
 
+function projectTabs(project) {
+  const tabs = [["dashboard", "Dashboard"], ["master", "Master Data"], ["wbs", "WBS"],
+    ["timeline", "Timeline"], ["opl", "OPL"], ["budget", "Budget"],
+    ["documents", "Documents"], ["contacts", "Contacts"], ["log", "Change Log"]];
+  if (project && (project.delivery_type === "Marine" || project.delivery_type === "Retrofit")) {
+    tabs.splice(4, 0, ["class", "Class"]);
+  }
+  return tabs;
+}
+
 async function render() {
   ensureUser();
   const parts = parseHash();
-  renderSidebar(parts);
+  let project = null;
+  if (parts[0] === "project" && parts[1]) {
+    try { project = await api(`/projects/${parts[1]}`); } catch (e) { project = null; }
+  }
+  renderSidebar(parts, project);
   try {
     if (parts.length === 0 || parts[0] === "portfolio") await viewPortfolio();
     else if (parts[0] === "library") await viewLibrary();
-    else if (parts[0] === "project" && parts[1]) await viewProject(Number(parts[1]), parts[2] || "dashboard");
+    else if (parts[0] === "project" && parts[1]) await viewProject(Number(parts[1]), parts[2] || "dashboard", project);
     else main.innerHTML = "<h1>Not found</h1>";
   } catch (e) {
     main.innerHTML = `<div class="card"><span class="err">${esc(e.message)}</span></div>`;
   }
 }
 
-function renderSidebar(parts) {
+function renderSidebar(parts, project) {
   let html = `<div class="nav-title">Tool</div>
     <a href="#/" class="${!parts[0] || parts[0] === "portfolio" ? "active" : ""}">Portfolio</a>
     <a href="#/library" class="${parts[0] === "library" ? "active" : ""}">Library</a>`;
   if (parts[0] === "project" && parts[1]) {
     const pid = parts[1];
     const tab = parts[2] || "dashboard";
-    const tabs = [["dashboard", "Dashboard"], ["master", "Master Data"], ["wbs", "WBS"],
-      ["timeline", "Timeline"], ["opl", "OPL"], ["budget", "Budget"],
-      ["documents", "Documents"], ["contacts", "Contacts"], ["log", "Change Log"]];
     html += `<div class="nav-title">Delivery Project #${esc(pid)}</div>` +
-      tabs.map(([k, label]) => `<a href="#/project/${pid}/${k}" class="${tab === k ? "active" : ""}">${label}</a>`).join("");
+      projectTabs(project).map(([k, label]) =>
+        `<a href="#/project/${pid}/${k}" class="${tab === k ? "active" : ""}">${label}</a>`).join("");
   }
   sidebar.innerHTML = html;
 }
@@ -219,11 +231,9 @@ function newProjectModal() {
 
 // ---------------------------------------------------------------- project shell
 
-async function viewProject(pid, tab) {
-  const p = await api(`/projects/${pid}`);
-  const tabs = [["dashboard", "Dashboard"], ["master", "Master Data"], ["wbs", "WBS"],
-    ["timeline", "Timeline"], ["opl", "OPL"], ["budget", "Budget"],
-    ["documents", "Documents"], ["contacts", "Contacts"], ["log", "Change Log"]];
+async function viewProject(pid, tab, project) {
+  const p = project || await api(`/projects/${pid}`);
+  const tabs = projectTabs(p);
   main.innerHTML = `
     <h1>${esc(p.name)} <span class="badge ${esc((p.status || "ongoing").toLowerCase())}">${esc(p.status)}</span></h1>
     <div class="tabs">${tabs.map(([k, label]) =>
@@ -234,6 +244,7 @@ async function viewProject(pid, tab) {
   else if (tab === "master") await renderMaster(pid, p, c);
   else if (tab === "wbs") await renderWbs(pid, c);
   else if (tab === "timeline") await renderTimeline(pid, c);
+  else if (tab === "class") await renderClass(pid, c);
   else if (tab === "opl") await renderOpl(pid, c);
   else if (tab === "budget") await renderBudget(pid, c);
   else if (tab === "documents") await renderDocuments(pid, c);
@@ -667,6 +678,35 @@ async function renderContacts(pid, c) {
   });
 }
 
+// ---------------------------------------------------------------- class checklist
+
+async function renderClass(pid, c) {
+  const d = await api(`/projects/${pid}/class`);
+  const badge = s => `<span class="badge ${s === "Done" ? "done" : s === "In progress" ? "inprogress" : s === "N/A" ? "low" : "missing"}">${esc(s)}</span>`;
+  c.innerHTML = `<div class="card">
+      <h3>Class / PED checklist — ${esc(d.delivery_type)} delivery</h3>
+      <p class="small muted">From the Library standard "Climeon Working Standard — Marine Classification &amp; PED Certification (HP300)" (Section 6, project process). A stage closes only when its exit criteria are met and recorded in the approval log.</p>
+      <table><thead><tr><th>Stage</th><th>Title</th><th>Timing / lead time</th><th>Owner</th>
+        <th>Class / NoBo touchpoint</th><th>Exit criteria</th><th>Status</th><th>Comment</th><th></th></tr></thead>
+      <tbody>${d.items.map(i => `<tr>
+        <td>${i.stage}</td><td><strong>${esc(i.title)}</strong></td>
+        <td class="small">${esc(i.timing)}</td><td>${esc(i.owner)}</td>
+        <td class="small">${esc(i.touchpoint)}</td><td class="small">${esc(i.exit_criteria)}</td>
+        <td>${badge(i.status)}</td><td class="small">${esc(i.comment)}</td>
+        <td><button class="btn small edit-class" data-id="${i.id}">Edit</button></td>
+      </tr>`).join("") || '<tr><td colspan="9" class="muted">No checklist items.</td></tr>'}</tbody></table>
+    </div>`;
+  c.querySelectorAll(".edit-class").forEach(b => b.onclick = () => {
+    const item = d.items.find(x => x.id === Number(b.dataset.id));
+    editModal(`Class checklist — Stage ${item.stage}: ${item.title}`, [
+      { key: "status", label: "Status", type: "select", options: ["Not started", "In progress", "Done", "N/A"] },
+      { key: "comment", label: "Comment / approval-log reference" },
+    ], item, async vals => {
+      await api(`/projects/${pid}/class/${item.id}`, { method: "PUT", body: vals });
+    });
+  });
+}
+
 // ---------------------------------------------------------------- log
 
 async function renderLog(pid, c) {
@@ -714,7 +754,8 @@ async function viewLibrary() {
       });
       if (res.status === 403) return alert("Invalid library password");
       if (!res.ok) throw new Error(await res.text());
-      flash("Uploaded");
+      const data = await res.json();
+      flash(data.wiki_chapter_id ? "Uploaded — wiki chapter created" : "Uploaded");
       render();
     } catch (e) { alert(e.message); }
   };
@@ -757,6 +798,9 @@ async function toggleWiki() {
       <ul>${w.library_files.map(f => `<li><a href="/api/library/file/${f.id}">${esc(f.filename)}</a>
         <span class="small muted">— ${esc(f.uploaded_by)}, ${esc(f.uploaded_at)}</span></li>`).join("") || '<li class="muted">No files uploaded yet.</li>'}</ul>
     </details>
+    ${(w.chapters || []).map(ch => `<details><summary>${esc(ch.title)} <span class="small muted">wiki chapter</span></summary>
+      <pre style="white-space:pre-wrap;font-size:12px;max-height:50vh;overflow:auto">${esc((ch.content || "").slice(0, 30000))}${(ch.content || "").length > 30000 ? "\n…[truncated]" : ""}</pre>
+    </details>`).join("")}
     <button class="btn ghost" id="wiki-close" style="color:var(--navy);border-color:var(--line)">Close</button>`;
   wikiDrawer.classList.remove("hidden");
   document.getElementById("wiki-close").onclick = () => wikiDrawer.classList.add("hidden");
