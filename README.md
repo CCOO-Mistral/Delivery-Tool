@@ -21,18 +21,22 @@ Environment variables:
 
 ## Features (mapped to the workbook tabs)
 
-- **Portfolio** — all projects with status, delivery manager, number of HP300 units,
-  HP300 version, first/last delivery dates, open-point counts, and an "Enter" button
-  into each project dashboard.
-- **Per project**: Dashboard (status, open/blocked open points, upcoming milestones),
-  Master Data, WBS (phases → gates → milestones → activities, `a.b.c.d` codes,
-  seeded from the workbook, editable), Timeline (zoomable weekly Gantt, due dates
-  computed from contract date + week offsets, +4 weeks per extra module up to M14,
-  critical OPLs as clickable red diamonds at their due date), OPL (auto-numbered,
-  calculated duration, status/priority selections), Budget (EUR cash-flow chart:
-  payment milestones in, COGS out, cumulative line), Documents (checklist seeded
-  from the workbook's document list; new master documents are added to all projects),
-  Contacts (sortable/filterable), Change Log (audit trail per project).
+- **Portfolio** — KPI cards (critical/blocked open points now vs. 14 days ago,
+  reconstructed from the audit log), all projects (status, delivery manager, HP300
+  count/version, first/last delivery dates, open points), a clickable list of all
+  critical/blocked OPLs across projects, and a portfolio timeline highlighting every
+  project's FAT (M9) and commissioning (M13) date.
+- **Per project**: Dashboard, Master Data (incl. shipyard / shipyard country for
+  Marine), WBS (collapsible phases & milestones, inline click-to-edit rows, "n/a"
+  status, filter, new items default owner = delivery manager), Timeline (zoomable
+  weekly Gantt; all modules share the timeline until M6, then diverge +4 weeks per
+  module for M7–M14 with per-module sub-milestones; colors follow WBS status; click a
+  milestone to reveal its activities; critical **or blocked** OPLs as clickable red
+  diamonds), OPL (Blocker = Yes/No selection + separate blocker description; critical/
+  blocked rows bold), Budget (planned/forecast/actual cost columns, paid flag on
+  payment milestones, deviations list with status/billable/link, top summary cards,
+  weekly cash-flow chart), Documents (filter; "n/a" items in a separate bottom table;
+  code column far right), Contacts (sortable/filterable), Change Log (filterable).
 - **Tool level**: Library (password-protected upload/delete). Every uploaded file
   automatically becomes a **wiki chapter** (text is extracted from .docx/.txt/.md),
   shown in the Wiki drawer. Files placed in `library-seed/` are auto-imported into

@@ -116,11 +116,19 @@ def parse_date(s):
         return None
 
 
-def milestone_due_date(contract_date, week_offset, module_idx=0):
+def module_shift_weeks(milestone_no, module_idx):
+    # Modules share the same timeline until M6 completes; after that each
+    # succeeding module is produced 4 weeks after the previous one.
+    if module_idx <= 0 or milestone_no <= 6:
+        return 0
+    return 4 * module_idx
+
+
+def milestone_due_date(contract_date, week_offset, module_idx=0, milestone_no=0):
     base = parse_date(contract_date)
     if base is None:
         return ""
-    return (base + timedelta(weeks=week_offset + 4 * module_idx)).isoformat()
+    return (base + timedelta(weeks=week_offset + module_shift_weeks(milestone_no, module_idx))).isoformat()
 
 
 def days_between(start, due):
@@ -356,7 +364,38 @@ def library_delete(fid):
 
 PROJECT_FIELDS = ["name", "status", "delivery_manager", "customer", "end_customer",
                   "delivery_type", "equipment", "modules_count", "module_type", "regulatory",
-                  "grid_codes", "contract_date", "first_delivery_date", "last_delivery_date"]
+                  "grid_codes", "contract_date", "first_delivery_date", "last_delivery_date",
+                  "shipyard", "shipyard_country"]
+
+
+def _opl_critical_blocked_at(conn, ts):
+    """Best-effort count of open OPLs that were Critical or Blocked at time ts,
+    reconstructed from the audit log."""
+    items = conn.execute("SELECT id, status, priority, blocker, created_at FROM opl").fetchall()
+    count = 0
+    for it in items:
+        if it["created_at"] > ts:
+            continue
+        status, priority, blocker = it["status"], it["priority"], it["blocker"]
+        for a in conn.execute(
+                "SELECT changed_at, detail FROM audit WHERE entity = 'opl' AND entity_id = ?"
+                " AND changed_at <= ? ORDER BY changed_at DESC, id DESC",
+                (str(it["id"]), ts)).fetchall():
+            try:
+                det = json.loads(a["detail"])
+                if isinstance(det, dict):
+                    if "status" in det:
+                        status = det["status"]
+                    if "priority" in det:
+                        priority = det["priority"]
+                    if "blocker" in det:
+                        blocker = det["blocker"]
+            except (ValueError, TypeError):
+                pass
+            break
+        if status != "Closed" and (priority == "Critical" or blocker == "Yes"):
+            count += 1
+    return count
 
 
 @app.route("/api/projects")
@@ -365,10 +404,37 @@ def list_projects():
     rows = conn.execute(
         "SELECT p.*,"
         " (SELECT COUNT(*) FROM opl o WHERE o.project_id = p.id AND o.status != 'Closed') AS open_points,"
-        " (SELECT COUNT(*) FROM opl o WHERE o.project_id = p.id AND o.status = 'Blocked') AS blocked_points"
+        " (SELECT COUNT(*) FROM opl o WHERE o.project_id = p.id AND o.status = 'Blocked') AS blocked_points,"
+        " (SELECT COUNT(*) FROM opl o WHERE o.project_id = p.id AND o.status != 'Closed'"
+        "   AND (o.priority = 'Critical' OR o.blocker = 'Yes')) AS crit_blocked"
         " FROM projects p ORDER BY p.id").fetchall()
+    crit_opl = rows_to_dicts(conn.execute(
+        "SELECT o.id, o.number, o.description, o.assignee, o.due_date, o.priority, o.blocker,"
+        " o.project_id, p.name AS project_name FROM opl o JOIN projects p ON p.id = o.project_id"
+        " WHERE o.status != 'Closed' AND (o.priority = 'Critical' OR o.blocker = 'Yes')"
+        " ORDER BY o.due_date, o.project_id").fetchall())
+    now = datetime.now()
+    ts14 = (now - timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
+    kpi = {
+        "crit_blocked_now": sum(r["crit_blocked"] for r in rows),
+        "crit_blocked_14d_ago": _opl_critical_blocked_at(conn, ts14),
+        "open_points_now": sum(r["open_points"] for r in rows),
+    }
+    events = []
+    for p in rows:
+        if not p["contract_date"]:
+            continue
+        base = parse_date(p["contract_date"])
+        for mno, label in ((9, "FAT"), (13, "Commissioning")):
+            t = conn.execute("SELECT week_offset, due_date FROM timeline WHERE project_id = ? AND milestone_no = ?",
+                             (p["id"], mno)).fetchone()
+            if t:
+                due = t["due_date"] or (base + timedelta(weeks=t["week_offset"])).isoformat()
+                events.append({"project_id": p["id"], "project": p["name"], "kind": label,
+                               "date": due, "milestone_no": mno})
     conn.close()
-    return jsonify(rows_to_dicts(rows))
+    return jsonify({"projects": rows_to_dicts(rows), "critical_opl": crit_opl,
+                    "kpi": kpi, "events": events})
 
 
 @app.route("/api/projects", methods=["POST"])
@@ -400,7 +466,7 @@ def create_project():
         conn.execute(
             "INSERT INTO timeline(project_id, milestone_no, name, week_offset, due_date) VALUES (?,?,?,?,?)",
             (pid, t["milestone_no"], t["name"], t["week_offset"],
-             milestone_due_date(d.get("contract_date", ""), t["week_offset"])))
+             milestone_due_date(d.get("contract_date", ""), t["week_offset"], 0, t["milestone_no"])))
 
     for t in conn.execute("SELECT id FROM doc_templates ORDER BY id").fetchall():
         conn.execute("INSERT INTO project_documents(project_id, template_id) VALUES (?,?)",
@@ -416,14 +482,24 @@ def create_project():
     conn.execute(
         "INSERT INTO budget(project_id, sales_price, services_price, cogs_module, service_costs,"
         " direct_material) VALUES (?,?,?,?,?,?)",
-        (pid, 0, 0, 0, 20000, 350000))
-    defaults_out = [(6, "Direct material DP", 0, 20.0), (24, "Direct Material Total", 0, 10.0),
-                    (28, "Direct Material Total", 0, 70.0), (9, "Production & FAT", 40000, None),
-                    (11, "Shipping Packing", 10000, None), (13, "Commissioning", 20000, None)]
-    for week, label, cost, pct in defaults_out:
+        (pid, 0, 0, 0, 20000, 288288.29))
+    defaults_out = [
+        (6, "Direct material DP", 0, 20.0, None, "pct_dm"),
+        (24, "Direct Material Total", 0, 10.0, None, "pct_dm"),
+        (28, "Direct Material Total", 0, 70.0, None, "pct_dm"),
+        (0, "Project Management", 13153.15, None, None, "spread"),
+        (11, "FAT", 7711.71, None, None, "fixed"),
+        (11, "Shipping Packing", 1918.92, None, None, "fixed"),
+        (12, "Class Approval", 7207.21, None, None, "fixed"),
+        (13, "Commissioning", 20000, None, None, "fixed"),
+        (1, "Agent", 0, None, 2.0, "pct_sales"),
+        (14, "Warranty", 7387.39, None, None, "fixed"),
+    ]
+    for week, label, cost, pct_dm, pct_sales, mode in defaults_out:
         conn.execute(
-            "INSERT INTO cash_out(project_id, week, label, cost, pct_of_dm) VALUES (?,?,?,?,?)",
-            (pid, week, label, cost, pct))
+            "INSERT INTO cash_out(project_id, week, label, cost, pct_of_dm, pct_of_sales, mode, planned)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (pid, week, label, cost, pct_dm, pct_sales, mode, cost if mode == "fixed" else 0))
     defaults_in = [(1, "Down payment", 30, 0), (2, "Sourcing completed", 30, 28),
                    (3, "Shipped to location", 20, 54), (4, "Installation completed", 10, 62),
                    (5, "Handover & closure (incl. services)", 10, 78)]
@@ -479,8 +555,8 @@ def update_project(pid):
                     (pid,)).fetchall():
                 if not t["due_date"]:
                     conn.execute("UPDATE timeline SET due_date = ? WHERE project_id = ? AND milestone_no = ?",
-                                 (milestone_due_date(d["contract_date"], t["week_offset"]), pid,
-                                  t["milestone_no"]))
+                                 (milestone_due_date(d["contract_date"], t["week_offset"], 0,
+                                                     t["milestone_no"]), pid, t["milestone_no"]))
         bump_rev(conn)
         audit(conn, pid, "project", pid, "update", ",".join(sets))
         conn.commit()
@@ -554,11 +630,15 @@ def wbs_add(pid):
     if not code:
         code = str(conn.execute("SELECT COUNT(*) FROM wbs WHERE project_id = ?", (pid,)).fetchone()[0] + 1)
     pos = conn.execute("SELECT COALESCE(MAX(pos), -1) + 1 FROM wbs WHERE project_id = ?", (pid,)).fetchone()[0]
+    owner = d.get("owner", "")
+    if not owner:
+        dm = conn.execute("SELECT delivery_manager FROM projects WHERE id = ?", (pid,)).fetchone()
+        owner = dm["delivery_manager"] if dm else ""
     cur = conn.execute(
         "INSERT INTO wbs(project_id, code, item_type, name, parent_code, doc_ref, owner, pos)"
         " VALUES (?,?,?,?,?,?,?,?)",
         (pid, code, d.get("item_type", "activity"), d.get("name", ""), parent,
-         d.get("doc_ref", ""), d.get("owner", ""), pos))
+         d.get("doc_ref", ""), owner, pos))
     bump_rev(conn)
     audit(conn, pid, "wbs", cur.lastrowid, "create", f"{code} {d.get('name', '')}")
     conn.commit()
@@ -605,24 +685,27 @@ def timeline_get(pid):
                         (pid,)).fetchall()
     out = []
     for t in rows:
-        computed = milestone_due_date(p["contract_date"], t["week_offset"], module_idx)
-        base = t["due_date"] or milestone_due_date(p["contract_date"], t["week_offset"], 0)
+        computed = milestone_due_date(p["contract_date"], t["week_offset"], module_idx, t["milestone_no"])
+        base = t["due_date"] or milestone_due_date(p["contract_date"], t["week_offset"], 0, t["milestone_no"])
         effective = base
-        if module_idx and base:
+        shift = module_shift_weeks(t["milestone_no"], module_idx)
+        if shift and base:
             bd = parse_date(base)
             if bd:
-                effective = (bd + timedelta(weeks=4 * module_idx)).isoformat()
+                effective = (bd + timedelta(weeks=shift)).isoformat()
         out.append({
             "milestone_no": t["milestone_no"], "name": t["name"],
             "week_offset": t["week_offset"], "due_date": effective,
             "computed_due_date": computed, "done": t["done"],
         })
     critical = rows_to_dicts(conn.execute(
-        "SELECT id, number, description, due_date, assignee, priority FROM opl"
-        " WHERE project_id = ? AND priority = 'Critical' AND status != 'Closed'", (pid,)).fetchall())
+        "SELECT id, number, description, due_date, assignee, priority, blocker FROM opl"
+        " WHERE project_id = ? AND status != 'Closed'"
+        " AND (priority = 'Critical' OR blocker = 'Yes')", (pid,)).fetchall())
     conn.close()
     return jsonify({"milestones": out, "critical_opl": critical,
-                    "contract_date": p["contract_date"], "module": module_idx})
+                    "contract_date": p["contract_date"], "module": module_idx,
+                    "modules": p["modules_count"] or 1})
 
 
 @app.route("/api/projects/<int:pid>/timeline/<int:mno>", methods=["PUT"])
@@ -677,10 +760,10 @@ def opl_add(pid):
                           (pid,)).fetchone()[0]
     cur = conn.execute(
         "INSERT INTO opl(project_id, number, status, description, assignee, start_date, due_date,"
-        " priority, blocker, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " priority, blocker, blocker_description, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (pid, number, d.get("status", "Open"), d.get("description", ""), d.get("assignee", ""),
          d.get("start_date", ""), d.get("due_date", ""), d.get("priority", "Mid"),
-         d.get("blocker", ""), user()))
+         d.get("blocker", "No"), d.get("blocker_description", ""), user()))
     bump_rev(conn)
     audit(conn, pid, "opl", cur.lastrowid, "create", f"#{number} {d.get('description', '')[:80]}")
     conn.commit()
@@ -702,7 +785,8 @@ def opl_edit(pid, oid):
     else:
         d = body()
         sets, vals = [], []
-        for c in ["status", "description", "assignee", "start_date", "due_date", "priority", "blocker"]:
+        for c in ["status", "description", "assignee", "start_date", "due_date", "priority", "blocker",
+                  "blocker_description"]:
             if c in d:
                 sets.append(f"{c} = ?")
                 vals.append(d[c])
@@ -726,6 +810,8 @@ def budget_get(pid):
         "SELECT * FROM payment_milestones WHERE project_id = ? ORDER BY seq", (pid,)).fetchall())
     cashout = rows_to_dicts(conn.execute(
         "SELECT * FROM cash_out WHERE project_id = ? ORDER BY week, id", (pid,)).fetchall())
+    deviations = rows_to_dicts(conn.execute(
+        "SELECT * FROM budget_deviations WHERE project_id = ? ORDER BY id", (pid,)).fetchall())
     conn.close()
     modules = p["modules_count"] or 1
     b = dict(b) if b else {"sales_price": 0, "services_price": 0, "cogs_module": 0,
@@ -745,7 +831,19 @@ def budget_get(pid):
     cash_out_w = [0.0] * (max_week + 1)
     dm_total = (b["direct_material"] or 0) * modules
     for c in cashout:
-        amt = (dm_total * (c["pct_of_dm"] or 0) / 100.0) if c["pct_of_dm"] is not None else (c["cost"] or 0) * modules
+        mode = c["mode"] or "fixed"
+        if mode == "pct_dm":
+            amt = dm_total * (c["pct_of_dm"] or 0) / 100.0
+        elif mode == "pct_sales":
+            amt = sales_total * (c["pct_of_sales"] or 0) / 100.0
+        elif mode == "spread":
+            amt = (c["cost"] or 0) * modules
+            if max_week >= 0:
+                for w in range(max_week + 1):
+                    cash_out_w[w] += amt / (max_week + 1)
+            continue
+        else:
+            amt = (c["cost"] or 0) * modules
         if 0 <= c["week"] <= max_week:
             cash_out_w[c["week"]] += amt
     cumulative = []
@@ -760,10 +858,17 @@ def budget_get(pid):
         for w in weeks:
             run += cash_in[w] - cash_out_w[w]
             cumulative.append(run)
+    total_planned = sum((c["planned"] or c["cost"] or 0) for c in cashout)
+    total_forecast = sum((c["forecast"] or c["planned"] or c["cost"] or 0) for c in cashout)
+    total_actual = sum((c["actual"] or 0) for c in cashout)
+    dev_total = sum((d["amount"] or 0) for d in deviations if d["status"] != "Closed")
     return jsonify({
-        "inputs": b, "payments": payments, "cashout": cashout, "modules": modules,
+        "inputs": b, "payments": payments, "cashout": cashout, "deviations": deviations,
+        "modules": modules,
         "weeks": weeks, "cash_in": cash_in, "cash_out": cash_out_w, "cumulative": cumulative,
         "sales_total": sales_total,
+        "totals": {"planned": total_planned, "forecast": total_forecast,
+                   "actual": total_actual, "deviations": dev_total},
     })
 
 
@@ -783,15 +888,30 @@ def budget_put(pid):
         conn.execute("DELETE FROM payment_milestones WHERE project_id = ?", (pid,))
         for i, pm in enumerate(d["payments"], start=1):
             conn.execute(
-                "INSERT INTO payment_milestones(project_id, seq, label, pct, week) VALUES (?,?,?,?,?)",
-                (pid, i, pm.get("label", ""), float(pm.get("pct") or 0), int(pm.get("week") or 0)))
+                "INSERT INTO payment_milestones(project_id, seq, label, pct, week, paid)"
+                " VALUES (?,?,?,?,?,?)",
+                (pid, i, pm.get("label", ""), float(pm.get("pct") or 0), int(pm.get("week") or 0),
+                 1 if pm.get("paid") in (True, 1, "Yes", "yes") else 0))
     if "cashout" in d:
         conn.execute("DELETE FROM cash_out WHERE project_id = ?", (pid,))
         for c in d["cashout"]:
             conn.execute(
-                "INSERT INTO cash_out(project_id, week, label, cost, pct_of_dm) VALUES (?,?,?,?,?)",
+                "INSERT INTO cash_out(project_id, week, label, cost, pct_of_dm, pct_of_sales, mode,"
+                " planned, forecast, actual) VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (pid, int(c.get("week") or 0), c.get("label", ""), float(c.get("cost") or 0),
-                 float(c["pct_of_dm"]) if c.get("pct_of_dm") not in (None, "") else None))
+                 float(c["pct_of_dm"]) if c.get("pct_of_dm") not in (None, "") else None,
+                 float(c["pct_of_sales"]) if c.get("pct_of_sales") not in (None, "") else None,
+                 c.get("mode", "fixed"),
+                 float(c.get("planned") or 0), float(c.get("forecast") or 0),
+                 float(c.get("actual") or 0)))
+    if "deviations" in d:
+        conn.execute("DELETE FROM budget_deviations WHERE project_id = ?", (pid,))
+        for dv in d["deviations"]:
+            conn.execute(
+                "INSERT INTO budget_deviations(project_id, description, amount, status, billable,"
+                " ref_link) VALUES (?,?,?,?,?,?)",
+                (pid, dv.get("description", ""), float(dv.get("amount") or 0),
+                 dv.get("status", "Request"), dv.get("billable", "No"), dv.get("ref_link", "")))
     bump_rev(conn)
     audit(conn, pid, "budget", pid, "update", json.dumps(d)[:200])
     conn.commit()

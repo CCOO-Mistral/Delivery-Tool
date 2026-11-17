@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS projects (
     contract_date TEXT DEFAULT '',
     first_delivery_date TEXT DEFAULT '',
     last_delivery_date TEXT DEFAULT '',
+    shipyard TEXT DEFAULT '',
+    shipyard_country TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now')),
     created_by TEXT DEFAULT ''
 );
@@ -77,7 +79,8 @@ CREATE TABLE IF NOT EXISTS opl (
     start_date TEXT DEFAULT '',
     due_date TEXT DEFAULT '',
     priority TEXT DEFAULT 'Mid',
-    blocker TEXT DEFAULT '',
+    blocker TEXT DEFAULT 'No',
+    blocker_description TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now')),
     created_by TEXT DEFAULT ''
 );
@@ -95,7 +98,8 @@ CREATE TABLE IF NOT EXISTS payment_milestones (
     seq INTEGER NOT NULL,
     label TEXT DEFAULT '',
     pct REAL DEFAULT 0,
-    week INTEGER DEFAULT 0
+    week INTEGER DEFAULT 0,
+    paid INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS cash_out (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -103,7 +107,21 @@ CREATE TABLE IF NOT EXISTS cash_out (
     week INTEGER NOT NULL,
     label TEXT DEFAULT '',
     cost REAL DEFAULT 0,
-    pct_of_dm REAL
+    pct_of_dm REAL,
+    pct_of_sales REAL,
+    mode TEXT DEFAULT 'fixed',
+    planned REAL DEFAULT 0,
+    forecast REAL DEFAULT 0,
+    actual REAL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS budget_deviations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    description TEXT DEFAULT '',
+    amount REAL DEFAULT 0,
+    status TEXT DEFAULT 'Request',
+    billable TEXT DEFAULT 'No',
+    ref_link TEXT DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS doc_templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -289,4 +307,23 @@ def init_db():
             "INSERT INTO class_checklist_standard(stage, title, timing, owner, touchpoint, exit_criteria)"
             " VALUES (?,?,?,?,?,?)", stages)
     conn.commit()
+    migrate(conn)
     conn.close()
+
+
+def migrate(conn):
+    """Add columns introduced in later versions to existing databases."""
+    def add_col(table, col, decl):
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        if col not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    add_col("projects", "shipyard", "TEXT DEFAULT ''")
+    add_col("projects", "shipyard_country", "TEXT DEFAULT ''")
+    add_col("opl", "blocker_description", "TEXT DEFAULT ''")
+    add_col("payment_milestones", "paid", "INTEGER DEFAULT 0")
+    add_col("cash_out", "pct_of_sales", "REAL")
+    add_col("cash_out", "mode", "TEXT DEFAULT 'fixed'")
+    add_col("cash_out", "planned", "REAL DEFAULT 0")
+    add_col("cash_out", "forecast", "REAL DEFAULT 0")
+    add_col("cash_out", "actual", "REAL DEFAULT 0")
+    conn.commit()
