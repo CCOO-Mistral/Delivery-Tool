@@ -590,11 +590,18 @@ def project_export(pid):
     for r in conn.execute("SELECT * FROM budget_deviations WHERE project_id=? ORDER BY id", (pid,)):
         dv.append([r["description"], r["amount"], r["status"], r["billable"], r["ref_link"]])
     sheets.append(("Deviations", dv))
-    docs = [["Code", "Doc name", "Status", "Link", "Comment"]]
+    docs = [["Phase", "Doc name", "Description", "Status", "Link", "Comment", "Owner", "Reviewer",
+             "Approver", "Flags", "Code"]]
     for r in conn.execute(
-            "SELECT pd.status, pd.link, pd.comment, t.code, t.doc_name FROM project_documents pd"
-            " JOIN doc_templates t ON t.id = pd.template_id WHERE pd.project_id=? ORDER BY t.id", (pid,)):
-        docs.append([r["code"], r["doc_name"], r["status"], r["link"], r["comment"]])
+            "SELECT pd.status, pd.link, pd.comment, t.phase, t.consolidated, t.code, t.doc_name,"
+            " t.description, t.owner, t.reviewer, t.approver, t.rina, t.abs, t.customer, t.internal,"
+            " t.hard_copies FROM project_documents pd"
+            " JOIN doc_templates t ON t.id = pd.template_id WHERE pd.project_id=?"
+            " ORDER BY CASE WHEN pd.status = 'n/a' THEN 1 ELSE 0 END, t.id", (pid,)):
+        flags = ",".join(k for k in ("rina", "abs", "customer", "internal", "hard_copies")
+                         if r[k] in ("x", "R", "D"))
+        docs.append([r["phase"], r["doc_name"], r["description"], r["status"], r["link"], r["comment"],
+                     r["owner"], r["reviewer"], r["approver"], flags, r["consolidated"] or r["code"]])
     sheets.append(("Documents", docs))
     ct = [["Company", "First name", "Last name", "Role", "Email", "Phone", "Language", "Contact way"]]
     for r in conn.execute("SELECT * FROM contacts WHERE project_id=? ORDER BY id", (pid,)):
@@ -789,7 +796,9 @@ def project_import(pid):
     n = 0
     for r in _sheet_table(sheets, "Documents"):
         code = sanitize(r.get("code", ""))
-        t = conn.execute("SELECT id FROM doc_templates WHERE code=?", (code,)).fetchone()
+        name = sanitize(r.get("doc name", ""))
+        t = conn.execute("SELECT id FROM doc_templates WHERE consolidated=? OR (consolidated='' AND doc_name=?)",
+                         (code, name)).fetchone()
         if not t:
             continue
         status = sanitize(r.get("status", "") or "Missing")
