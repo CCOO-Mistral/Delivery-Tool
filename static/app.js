@@ -68,6 +68,12 @@ function isoWeek(d) {
   first.setUTCDate(first.getUTCDate() - fday + 3);
   return 1 + Math.round((t - first) / 6048e5);
 }
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function monthStartInWeek(d) {
+  if (d.getDate() === 1) return new Date(d.getFullYear(), d.getMonth(), 1);
+  const firstNext = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  return (firstNext - d) <= 6 * 864e5 ? firstNext : null;
+}
 
 function flash(msg) {
   const d = document.createElement("div");
@@ -313,9 +319,10 @@ function renderPortfolioTimeline(events) {
   let wi = 0;
   for (let d = new Date(min); d <= max; d.setDate(d.getDate() + 7), wi++) {
     const wno = isoWeek(d);
-    const lbl = wi % labelEvery === 0 ? (wno === 1 ? `W01 '${String(d.getFullYear()).slice(2)}` : `W${wno}`) : "";
-    ticks.push(`<div class="ptl-tick" style="left:${px(iso(d))}%">${lbl}</div>`);
-    vlines.push(`<div class="ptl-vline ${wno === 1 ? "year" : "week"}" style="left:calc(260px + (100% - 260px) * ${px(iso(d)) / 100})"></div>`);
+    const ms = monthStartInWeek(d);
+    const lbl = ms ? MONTHS[ms.getMonth()] : (wi % labelEvery === 0 ? (wno === 1 ? `W01 '${String(d.getFullYear()).slice(2)}` : `W${wno}`) : "");
+    ticks.push(`<div class="ptl-tick ${ms ? "month" : ""}" style="left:${px(iso(d))}%">${lbl}</div>`);
+    vlines.push(`<div class="ptl-vline ${wno === 1 ? "year" : ms ? "month" : "week"}" style="left:calc(260px + (100% - 260px) * ${px(iso(d)) / 100})"></div>`);
   }
   const todayLine = `<div class="ptl-today" style="left:calc(260px + (100% - 260px) * ${px(iso(today)) / 100})"><span>today ${iso(today)}</span></div>`;
   const byProject = {};
@@ -600,13 +607,17 @@ async function renderTimeline(pid, c) {
   const labelEvery = pw >= 18 ? 1 : pw >= 10 ? 2 : 4;
   const tickHTML = w => {
     const d = baseD ? new Date(baseD.getTime() + 7 * w * 864e5) : null;
+    const ms = d ? monthStartInWeek(d) : null;
+    if (ms) return `<div class="gantt-tick month" style="width:${pw}px">${MONTHS[ms.getMonth()]}</div>`;
     const lbl = d ? `W${isoWeek(d)}` : `W${w - startW}`;
     return `<div class="gantt-tick" style="width:${pw}px">${(w - startW) % labelEvery === 0 ? lbl : ""}</div>`;
   };
   const vlineHTML = w => {
     const d = baseD ? new Date(baseD.getTime() + 7 * w * 864e5) : null;
     const isYear = d ? isoWeek(d) === 1 : false;
-    return `<div class="gantt-vline ${isYear ? "year" : "week"}" style="left:${X(w)}px"></div>`;
+    const ms = d ? monthStartInWeek(d) : null;
+    const cls = isYear ? "year" : ms ? "month" : "week";
+    return `<div class="gantt-vline ${cls}" style="left:${X(w)}px"></div>`;
   };
   const ticks = [];
   const vlines = [];
