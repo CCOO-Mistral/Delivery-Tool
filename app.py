@@ -360,6 +360,13 @@ def library_delete(fid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/backup")
+def backup_db():
+    """Download the whole SQLite database (all entered project data)."""
+    return send_from_directory(os.path.dirname(db.DB_PATH), os.path.basename(db.DB_PATH),
+                               as_attachment=True, download_name="delivery-backup.db")
+
+
 # ---------------------------------------------------------------- projects / portfolio
 
 PROJECT_FIELDS = ["name", "status", "delivery_manager", "customer", "end_customer",

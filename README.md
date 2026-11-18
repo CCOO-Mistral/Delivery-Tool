@@ -55,9 +55,20 @@ Environment variables:
 
 - `app.py` — Flask server + REST API
 - `db.py` — SQLite schema and seed loading
-- `seed.json` — standards extracted from the requirements workbook
+- `seed.json` — standards extracted from the requirements workbook (WBS parsed
+  from the flat v3 layout: every row carries phase/gate/milestone/activity, so
+  codes are exactly `a.b.c.d`)
 - `gen_seed.py` — regenerates `seed.json` from the workbook
   (`python3 gen_seed.py path/to/workbook.xlsx`)
+- On every start, `sync_standards()` merges the current `seed.json` into the
+  standard tables and into all existing projects **without losing entered data**:
+  rows are matched by type+name, structural fields (code/parent/doc ref) are
+  refreshed, and user-entered fields (status, dates, owner, comments) are kept;
+  nothing is ever deleted from project tables. Existing databases are migrated
+  automatically (new columns/tables only).
+- **Backup**: Library page → "⬇ Backup database" downloads the whole
+  `delivery.db` (or `GET /api/backup`). `delivery.db` is the only file with your
+  data — it is git-ignored, so back it up regularly.
 - `static/` — single-page frontend (index.html, app.js, style.css)
 - `uploads/` — library files (runtime)
 - `library-seed/` — files auto-imported into the Library + wiki on first start

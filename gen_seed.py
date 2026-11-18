@@ -65,11 +65,59 @@ def cell(r, i):
     return r[i] if i < len(r) else ""
 
 
-def main():
-    sheets = load_sheets(PATH)
+def parse_wbs(rows):
+    """Parse the WBS sheet. v3 layout: one flat row per activity with columns
+    phase#, phase name, gate#, gate name, milestone#, milestone name, activity,
+    doc ref, owner (header row starts with 'Phase # - \"a\"'). Falls back to the
+    older two-section layout."""
+    header_idx = None
+    for i, r in enumerate(rows):
+        # v3 flat layout: header row followed by data rows that repeat
+        # phase/gate/milestone numbers on every row (milestone # in col 5)
+        if cell(r, 1).startswith("Phase #") and i + 1 < len(rows) and cell(rows[i + 1], 5).isdigit():
+            header_idx = i
+            break
+    if header_idx is not None:
+        phases, gates, milestones = [], [], {}
+        seen_p, seen_g = set(), set()
+        for r in rows[header_idx + 1:]:
+            a, b, c = cell(r, 1), cell(r, 3), cell(r, 5)
+            if not a or not c:
+                continue
+            if a not in seen_p:
+                seen_p.add(a)
+                phases.append({"num": a, "name": cell(r, 2)})
+            if (a, b) not in seen_g:
+                seen_g.add((a, b))
+                gates.append({"phase": a, "num": b, "name": cell(r, 4)})
+            mkey = (a, b, c)
+            if mkey not in milestones:
+                milestones[mkey] = {"phase": a, "gate": b, "num": c, "name": cell(r, 6),
+                                     "activities": []}
+            act = cell(r, 7)
+            if act:
+                milestones[mkey]["activities"].append(
+                    {"name": act, "doc_ref": cell(r, 8), "owner": cell(r, 9)})
+        wbs = []
+        for p in phases:
+            wbs.append({"code": p["num"], "type": "phase", "name": p["name"],
+                        "parent": "", "doc_ref": "", "owner": ""})
+        for g in gates:
+            wbs.append({"code": f'{g["phase"]}.{g["num"]}', "type": "gate", "name": g["name"],
+                        "parent": g["phase"], "doc_ref": "", "owner": ""})
+        for m in sorted(milestones.values(), key=lambda x: int(x["num"])):
+            code = f'{m["phase"]}.{m["gate"]}.{m["num"]}'
+            wbs.append({"code": code, "type": "milestone", "name": m["name"],
+                        "parent": f'{m["phase"]}.{m["gate"]}', "doc_ref": "", "owner": ""})
+            for i, a in enumerate(m["activities"], start=1):
+                wbs.append({"code": f"{code}.{i}", "type": "activity", "name": a["name"],
+                            "parent": code, "doc_ref": a["doc_ref"], "owner": a["owner"]})
+        return wbs, len(phases), len(gates), len(milestones), \
+            sum(len(m["activities"]) for m in milestones.values())
 
+    # legacy layout fallback
     phases, gates, milestones, m_by_no = [], [], [], {}
-    for r in sheets["WBS"]:
+    for r in rows:
         if cell(r, 1).isdigit() and cell(r, 2):
             phases.append({"num": cell(r, 1), "name": cell(r, 2)})
         if cell(r, 4).isdigit() and cell(r, 5):
@@ -85,21 +133,28 @@ def main():
         if mno and cell(r, 12):
             m_by_no[mno]["activities"].append(
                 {"name": cell(r, 12), "doc_ref": cell(r, 13), "owner": cell(r, 14)})
-
-    wbs_standard = []
+    wbs = []
     for p in phases:
-        wbs_standard.append({"code": p["num"], "type": "phase", "name": p["name"],
-                             "parent": "", "doc_ref": "", "owner": ""})
+        wbs.append({"code": p["num"], "type": "phase", "name": p["name"],
+                    "parent": "", "doc_ref": "", "owner": ""})
     for g in gates:
-        wbs_standard.append({"code": f'{g["num"]}.{g["num"]}', "type": "gate", "name": g["name"],
-                             "parent": g["num"], "doc_ref": "", "owner": ""})
+        wbs.append({"code": f'{g["num"]}.{g["num"]}', "type": "gate", "name": g["name"],
+                    "parent": g["num"], "doc_ref": "", "owner": ""})
     for m in sorted(milestones, key=lambda x: int(x["num"])):
         code = f'{m["gate"]}.{m["gate"]}.{m["num"]}'
-        wbs_standard.append({"code": code, "type": "milestone", "name": m["name"],
-                             "parent": f'{m["gate"]}.{m["gate"]}', "doc_ref": "", "owner": ""})
+        wbs.append({"code": code, "type": "milestone", "name": m["name"],
+                    "parent": f'{m["gate"]}.{m["gate"]}', "doc_ref": "", "owner": ""})
         for i, a in enumerate(m["activities"], start=1):
-            wbs_standard.append({"code": f"{code}.{i}", "type": "activity", "name": a["name"],
-                                 "parent": code, "doc_ref": a["doc_ref"], "owner": a["owner"]})
+            wbs.append({"code": f"{code}.{i}", "type": "activity", "name": a["name"],
+                        "parent": code, "doc_ref": a["doc_ref"], "owner": a["owner"]})
+    return wbs, len(phases), len(gates), len(milestones), \
+        sum(len(m["activities"]) for m in milestones)
+
+
+def main():
+    sheets = load_sheets(PATH)
+
+    wbs_standard, n_ph, n_gt, n_ms, n_act = parse_wbs(sheets["WBS"])
 
     timeline = []
     for r in sheets["Timeline"]:
@@ -131,8 +186,8 @@ def main():
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seed.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(seed, f, ensure_ascii=False, indent=1)
-    print(f"wrote {out}: {len(phases)} phases, {len(gates)} gates, {len(milestones)} milestones, "
-          f"{sum(len(m['activities']) for m in milestones)} activities, "
+    print(f"wrote {out}: {n_ph} phases, {n_gt} gates, {n_ms} milestones, "
+          f"{n_act} activities, {len(wbs_standard)} wbs rows, "
           f"{len(timeline)} timeline milestones, {len(doc_templates)} document templates")
 
 

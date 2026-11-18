@@ -308,7 +308,111 @@ def init_db():
             " VALUES (?,?,?,?,?,?)", stages)
     conn.commit()
     migrate(conn)
+    sync_standards(conn)
     conn.close()
+
+
+def sync_standards(conn):
+    """Merge the standards from seed.json into the standard tables and into
+    every existing project WITHOUT losing entered project data: rows are
+    matched by (type, name), standard fields (code/parent/doc_ref) are
+    refreshed, and user-entered fields (status, dates, owner, comments) are
+    kept. Nothing is ever deleted from project tables."""
+    try:
+        with open(SEED_PATH, encoding="utf-8") as f:
+            seed = json.load(f)
+    except (OSError, ValueError):
+        return
+    wbs_std = seed.get("wbs_standard", [])
+    tl_std = seed.get("timeline", [])
+    docs_std = seed.get("document_templates", [])
+
+    for i, w in enumerate(wbs_std):
+        conn.execute(
+            "INSERT INTO wbs_standard(code, item_type, name, parent_code, doc_ref, owner, pos)"
+            " VALUES (?,?,?,?,?,?,?)"
+            " ON CONFLICT(code) DO UPDATE SET item_type=excluded.item_type, name=excluded.name,"
+            " parent_code=excluded.parent_code, doc_ref=excluded.doc_ref, owner=excluded.owner, pos=excluded.pos",
+            (w["code"], w["type"], w["name"], w["parent"], w["doc_ref"], w["owner"], i))
+
+    for t in tl_std:
+        conn.execute(
+            "INSERT INTO timeline_standard(milestone_no, name, week_offset) VALUES (?,?,?)"
+            " ON CONFLICT(milestone_no) DO UPDATE SET name=excluded.name, week_offset=excluded.week_offset",
+            (t["num"], t["name"], t["week"]))
+
+    doc_cols = ["phase", "consolidated", "code", "description", "seq", "doc_name", "template",
+                "sample", "owner", "reviewer", "approver", "rina", "abs", "customer", "internal",
+                "hard_copies", "gate1", "gate2", "gate3", "gate4", "gate5", "comment"]
+    template_ids = {}
+    for d in docs_std:
+        key = d.get("consolidated") or d.get("doc_name") or ""
+        row = conn.execute(
+            "SELECT id FROM doc_templates WHERE consolidated = ? OR (consolidated = '' AND doc_name = ?)",
+            (key, key)).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE doc_templates SET " + ",".join(f"{c}=?" for c in doc_cols) + " WHERE id=?",
+                [d.get(c, "") for c in doc_cols] + [row[0]])
+            template_ids[key] = row[0]
+        else:
+            cur = conn.execute(
+                "INSERT INTO doc_templates(" + ",".join(doc_cols) + ") VALUES (" +
+                ",".join("?" * len(doc_cols)) + ")",
+                [d.get(c, "") for c in doc_cols])
+            template_ids[key] = cur.lastrowid
+
+    # merge WBS into every project
+    std_by_name = {(w["type"], w["name"]): w for w in wbs_std}
+    for p in conn.execute("SELECT id FROM projects").fetchall():
+        pid = p["id"]
+        existing = conn.execute(
+            "SELECT id, item_type, name, owner, code, doc_ref FROM wbs WHERE project_id = ?",
+            (pid,)).fetchall()
+        matched = set()
+        for row in existing:
+            std = std_by_name.get((row["item_type"], row["name"]))
+            if std:
+                matched.add((std["type"], std["name"]))
+                # refresh structural fields; keep status/dates and any user-entered owner/doc_ref
+                conn.execute("UPDATE wbs SET code=?, parent_code=? WHERE id=?",
+                             (std["code"], std["parent"], row["id"]))
+                if not row["doc_ref"]:
+                    conn.execute("UPDATE wbs SET doc_ref=? WHERE id=?", (std["doc_ref"], row["id"]))
+                if not row["owner"]:
+                    conn.execute("UPDATE wbs SET owner=? WHERE id=?", (std["owner"], row["id"]))
+        pos = conn.execute("SELECT COALESCE(MAX(pos), -1) FROM wbs WHERE project_id = ?",
+                           (pid,)).fetchone()[0]
+        for w in wbs_std:
+            if (w["type"], w["name"]) not in matched:
+                pos += 1
+                conn.execute(
+                    "INSERT INTO wbs(project_id, code, item_type, name, parent_code, doc_ref, owner, pos)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (pid, w["code"], w["type"], w["name"], w["parent"], w["doc_ref"], w["owner"], pos))
+
+        # merge timeline rows per project (keep manual due_date / done)
+        for t in tl_std:
+            row = conn.execute(
+                "SELECT name, week_offset, due_date FROM timeline WHERE project_id=? AND milestone_no=?",
+                (pid, t["num"])).fetchone()
+            if row is None:
+                conn.execute(
+                    "INSERT INTO timeline(project_id, milestone_no, name, week_offset) VALUES (?,?,?,?)",
+                    (pid, t["num"], t["name"], t["week"]))
+            elif row["due_date"] == "":
+                conn.execute(
+                    "UPDATE timeline SET name=?, week_offset=? WHERE project_id=? AND milestone_no=?",
+                    (t["name"], t["week"], pid, t["num"]))
+
+        # add new document templates to the project
+        have = {r[0] for r in conn.execute(
+            "SELECT template_id FROM project_documents WHERE project_id = ?", (pid,)).fetchall()}
+        for key, tid in template_ids.items():
+            if tid not in have:
+                conn.execute("INSERT INTO project_documents(project_id, template_id) VALUES (?,?)",
+                             (pid, tid))
+    conn.commit()
 
 
 def migrate(conn):

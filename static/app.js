@@ -381,7 +381,7 @@ async function renderWbs(pid, c) {
       <thead><tr><th>Code</th><th>Type</th><th>Status</th><th>Name</th><th>Owner</th>
         <th>Planned</th><th>Actual</th><th>Reference</th><th></th></tr></thead>
       <tbody>${filtered.map(w => `<tr class="${w.item_type}-row" data-code="${esc(w.code)}" data-parent="${esc(w.parent_code)}" data-id="${w.id}">
-        <td class="wbs-code">${w.item_type === "phase" || w.item_type === "milestone" ? '<span class="collapse-toggle">▾</span> ' : ""}${esc(w.code)}</td>
+        <td class="wbs-code">${w.item_type === "phase" || w.item_type === "gate" || w.item_type === "milestone" ? '<span class="collapse-toggle">▾</span> ' : ""}${esc(w.code)}</td>
         <td>${esc(w.item_type)}</td>
         <td class="cell-status">${statusBadge(w.status)}</td>
         <td class="cell-name" style="padding-left:${depth(w.code) * 14}px">${esc(w.name)}</td>
@@ -890,6 +890,7 @@ async function viewLibrary() {
       <input type="file" id="lib-file">
       <input type="password" id="lib-pass" placeholder="Library password">
       <button class="btn accent" id="lib-upload">Upload</button>
+      <a class="btn" style="color:var(--navy);background:#fff;border-color:var(--line)" href="/api/backup">⬇ Backup database</a>
     </div>
     <table><thead><tr><th>File</th><th>Uploaded by</th><th>When</th><th>Size</th><th></th></tr></thead>
     <tbody>${files.map(f => `<tr>
