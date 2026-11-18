@@ -190,5 +190,6 @@ tr.doc-phase-row:hover td { background: #13315c; }
 .gantt-today { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger); z-index: 3; pointer-events: none; }
 
 .gantt-vline { position: absolute; top: 0; bottom: 0; pointer-events: none; z-index: 0; }
+.gantt-vline.week { border-left: 1px solid #eef2f6; }
 .gantt-vline.month { border-left: 1px solid #d5dde8; }
 .gantt-vline.year { border-left: 2px solid var(--navy-2); }

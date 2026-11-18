@@ -580,42 +580,40 @@ async function renderTimeline(pid, c) {
   const modules = data.modules || 1;
   const midx = state.moduleIdx || 0;
   const shiftOf = mno => (mno > 6 ? 4 * midx : 0);
-  const startW = -4;  // chart starts 4 weeks before the contract date
-  const maxWeek = Math.max(82, ...data.milestones.map(m => m.week_offset + shiftOf(m.milestone_no))) + 4;
+  const baseD = data.contract_date ? new Date(data.contract_date + "T00:00:00") : null;
+  // ISO calendar week is the smallest component; 4-week buffer on each side of the project
+  const startW = -4;
+  const lastW = Math.max(82, ...data.milestones.map(m => m.week_offset + shiftOf(m.milestone_no)));
+  const endW = lastW + 4;
   const pw = ganttZoom;
+  const X = w => 260 + (w - startW) * pw;
+
+  // week ribbon: ISO week label per week (thinned at low zoom), divider every week, strong at year change
+  const ticks = [];
+  const vlines = [];
+  const labelEvery = pw >= 18 ? 1 : pw >= 10 ? 2 : 4;
+  for (let w = startW; w <= endW; w++) {
+    const d = baseD ? new Date(baseD.getTime() + 7 * w * 864e5) : null;
+    const isYear = d ? isoWeek(d) === 1 : false;
+    vlines.push(`<div class="gantt-vline ${isYear ? "year" : "week"}" style="left:${X(w)}px"></div>`);
+    const lbl = d ? `W${isoWeek(d)}` : `W${w - startW}`;
+    ticks.push(`<div class="gantt-tick" style="width:${pw}px">${(w - startW) % labelEvery === 0 ? lbl : ""}</div>`);
+  }
+
   const msColor = m =>
     WBS_STATUS_COLORS[wbsStatus[mnoToCode[String(m.milestone_no)]] || ""] || "var(--navy-2)";
-  const baseD = data.contract_date ? new Date(data.contract_date + "T00:00:00") : null;
-  const headTicks = [];
-  const vlines = [];
-  let prevMY = null;
-  for (let w = startW; w <= maxWeek; w++) {
-    const d = baseD ? new Date(baseD.getTime() + 7 * w * 864e5) : null;
-    if (d) {
-      const my = `${d.getFullYear()}-${d.getMonth()}`;
-      if (prevMY !== null && my !== prevMY) {
-        const isYear = my.split("-")[0] !== prevMY.split("-")[0];
-        vlines.push(`<div class="gantt-vline ${isYear ? "year" : "month"}" style="left:${260 + (w - startW) * pw}px"></div>`);
-      }
-      prevMY = my;
-    }
-    if (pw >= 14 || (w - startW) % 4 === 0) {
-      const lbl = d ? `W${isoWeek(d)}` : `W${w - startW}`;
-      headTicks.push(`<div class="gantt-tick" style="width:${pw}px">${lbl}</div>`);
-    }
-  }
   const subColors = ["#2ec4b6", "#f4a261", "#b388eb", "#ff8fab"];
   const rows = data.milestones.map((m, i) => {
     const prev = i > 0 ? data.milestones[i - 1].week_offset + shiftOf(data.milestones[i - 1].milestone_no) : 0;
     const wk = m.week_offset + shiftOf(m.milestone_no);
     const due = m.due_date || m.computed_due_date;
     const color = msColor(m);
-    const bar = `<div class="gantt-bar" style="left:${(prev - startW) * pw}px;width:${Math.max((wk - prev), 1) * pw}px;background:${color}" title="${esc(m.name)} — ${esc(due)}"></div>`;
-    const dia = `<div class="gantt-diamond" style="left:${(wk - startW) * pw - 9}px;background:${color}" title="M${m.milestone_no} ${esc(m.name)} — due ${esc(due)} (click for activities)" data-mno="${m.milestone_no}"></div>`;
+    const bar = `<div class="gantt-bar" style="left:${X(prev)}px;width:${Math.max((wk - prev), 1) * pw}px;background:${color}" title="${esc(m.name)} — ${esc(due)}"></div>`;
+    const dia = `<div class="gantt-diamond" style="left:${X(wk) - 9}px;background:${color}" title="M${m.milestone_no} ${esc(m.name)} — due ${esc(due)} (click for activities)" data-mno="${m.milestone_no}"></div>`;
     const subs = [];
     for (let mi = 1; mi < modules; mi++) {
       if (m.milestone_no > 6) {
-        subs.push(`<div class="gantt-subdiamond" style="left:${(m.week_offset + 4 * mi - startW) * pw - 5}px;background:${subColors[(mi - 1) % subColors.length]}" title="Module ${mi + 1} M${m.milestone_no}"></div>`);
+        subs.push(`<div class="gantt-subdiamond" style="left:${X(m.week_offset + 4 * mi) - 5}px;background:${subColors[(mi - 1) % subColors.length]}" title="Module ${mi + 1} M${m.milestone_no}"></div>`);
       }
     }
     return `<div class="gantt-row"><div class="gantt-label" title="${esc(m.name)}">M${m.milestone_no} ${esc(m.name)} <span class="muted small">${esc(due)}${m.done ? " ✓" : ""}</span></div>
@@ -624,9 +622,8 @@ async function renderTimeline(pid, c) {
   const critLane = `<div class="gantt-row"><div class="gantt-label" style="color:var(--danger)">⚠ Critical/Blocked OPL</div>
     <div class="gantt-track">${data.critical_opl.map(o => {
       const d = new Date(o.due_date);
-      const base = data.contract_date ? new Date(data.contract_date) : null;
-      const wk = base && d >= base ? Math.round((d - base) / (7 * 864e5)) : 0;
-      return `<div class="gantt-diamond critical" style="left:${(wk - startW) * pw - 11}px" title="#${o.number} ${esc(o.description)} — due ${esc(o.due_date)} (click to open)" data-opl="${o.id}"></div>`;
+      const wk = baseD && d >= baseD ? Math.round((d - baseD) / (7 * 864e5)) : 0;
+      return `<div class="gantt-diamond critical" style="left:${X(wk) - 11}px" title="#${o.number} ${esc(o.description)} — due ${esc(o.due_date)} (click to open)" data-opl="${o.id}"></div>`;
     }).join("")}</div></div>`;
   c.innerHTML = `<div class="toolbar">
       <label class="small muted">Module:
@@ -636,10 +633,10 @@ async function renderTimeline(pid, c) {
       <button class="btn small" data-zoom="6">−</button>
       <button class="btn small" data-zoom="10">•</button>
       <button class="btn small" data-zoom="20">+</button>
-      <span class="muted small">All modules share the timeline until M6; after that each module shifts +4 weeks per module (M7–M14). Colors follow WBS status. Click a milestone for its activities. Contract date: ${esc(data.contract_date || "—")}.</span>
+      <span class="muted small">ISO calendar weeks (W##) on the axis, divider every week, strong line at year change, 4-week buffer each side. Hover for a crosshair with the exact date (yyyy-mm-dd). Colors follow WBS status. Click a milestone for its activities. Contract date: ${esc(data.contract_date || "—")}.</span>
     </div>
-    <div class="gantt-wrap"><div class="gantt" style="min-width:${260 + (maxWeek - startW + 1) * pw}px">
-      <div class="gantt-head"><div class="gantt-label">Milestone</div><div style="display:flex">${headTicks.join("")}</div></div>
+    <div class="gantt-wrap"><div class="gantt" style="min-width:${260 + (endW - startW + 1) * pw}px">
+      <div class="gantt-head"><div class="gantt-label">Milestone</div><div style="display:flex">${ticks.join("")}</div></div>
       ${vlines.join("")}
       ${rows.join("")}${critLane}
     </div></div>
@@ -648,19 +645,22 @@ async function renderTimeline(pid, c) {
       <span><span class="swatch" style="background:var(--ok)"></span>done / n/a</span>
       <span><span class="swatch" style="background:var(--warn)"></span>in progress</span>
       <span><span class="swatch" style="background:var(--danger);transform:rotate(45deg)"></span>critical/blocked OPL at due date (clickable)</span>
-      <span><span class="swatch" style="background:#2ec4b6;transform:rotate(45deg);width:9px;height:9px"></span>sub-milestone of another module</span></div>`;
+      <span><span class="swatch" style="background:#2ec4b6;transform:rotate(45deg);width:9px;height:9px"></span>sub-milestone of another module</span>
+      <span><span class="swatch" style="background:var(--danger);width:2px;height:12px;transform:none"></span>today</span></div>`;
+  c.querySelector("#module-sel").onchange = e => { state.moduleIdx = Number(e.target.value); render(); };
+  c.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => { ganttZoom = Number(b.dataset.zoom); render(); });
   const gantt = c.querySelector(".gantt");
   if (gantt && baseD) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const wkToday = (today - baseD) / (7 * 864e5);
-    if (wkToday >= startW && wkToday <= maxWeek) {
+    if (wkToday >= startW && wkToday <= endW) {
       gantt.insertAdjacentHTML("beforeend",
-        `<div class="gantt-today" style="left:${260 + (wkToday - startW) * pw}px"><span>today ${isoDate(today)}</span></div>`);
+        `<div class="gantt-today" style="left:${X(wkToday)}px"><span>today ${isoDate(today)}</span></div>`);
     }
     gantt.addEventListener("mousemove", e => {
       const r = gantt.getBoundingClientRect();
       const week = (e.clientX - r.left - 260) / pw + startW;
-      if (week < startW || week > maxWeek) return;
+      if (week < startW || week > endW) return;
       const d = new Date(baseD);
       d.setDate(d.getDate() + Math.round(week) * 7);
       let xh = gantt.querySelector(".gantt-crosshair");
@@ -670,7 +670,7 @@ async function renderTimeline(pid, c) {
         xh.innerHTML = "<span></span>";
         gantt.appendChild(xh);
       }
-      xh.style.left = (260 + (week - startW) * pw) + "px";
+      xh.style.left = X(week) + "px";
       xh.querySelector("span").textContent = isoDate(d);
     });
     gantt.addEventListener("mouseleave", () => {
@@ -678,8 +678,6 @@ async function renderTimeline(pid, c) {
       if (xh) xh.remove();
     });
   }
-  c.querySelector("#module-sel").onchange = e => { state.moduleIdx = Number(e.target.value); render(); };
-  c.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => { ganttZoom = Number(b.dataset.zoom); render(); });
   const showActivities = mno => {
     const code = mnoToCode[String(mno)] || "";
     const acts = actsByMilestone[code] || [];
