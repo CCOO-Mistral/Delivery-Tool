@@ -759,13 +759,16 @@ async function renderDocuments(pid, c) {
   const filtered = filterRows(docs, "docs", ["phase", "doc_name", "description", "consolidated", "code", "owner", "status"]);
   const active = filtered.filter(d => d.status !== "n/a");
   const na = filtered.filter(d => d.status === "n/a");
+  if (!state.collapsedDocPhases) {
+    state.collapsedDocPhases = new Set([...new Set(active.map(d => d.phase))]);
+  }
   const statusBadge = s => `<span class="badge ${({ Missing: "missing", "In progress": "inprogress", Uploaded: "uploaded", Done: "done", "n/a": "done" })[s] || "low"}">${esc(s)}</span>`;
   const flags = d => ["rina", "abs", "customer", "internal", "hard_copies"].filter(k => d[k] === "x" || d[k] === "R" || d[k] === "D").join(", ");
-  const table = rows => `<table><thead><tr><th>Phase</th><th>Document</th><th>Status</th><th>Link</th>
-      <th>Comment</th><th>Owner</th><th>Reviewer</th><th>Approver</th><th>Flags</th><th>Code</th><th></th></tr></thead>
-      <tbody>${rows.map(d => `<tr${d.status === "Done" || d.status === "n/a" ? ' class="done-row"' : ""}>
+  const rowHTML = (d, hidden) => {
+    const cls = [d.status === "Done" || d.status === "n/a" ? "done-row" : "", hidden ? "hidden-row" : ""].filter(Boolean).join(" ");
+    return `<tr${cls ? ` class="${cls}"` : ""} data-phase="${esc(d.phase)}">
         <td class="small muted">${esc(d.phase)}</td>
-        <td>${esc(d.doc_name)}<br><span class="small muted">${esc(d.description)}</span></td>
+        <td><strong>${esc(d.doc_name)}</strong><br><span class="small muted">${esc(d.description)}</span></td>
         <td>${statusBadge(d.status)}</td>
         <td class="small">${d.link ? `<a href="${esc(d.link)}" target="_blank">link</a>` : ""}</td>
         <td class="small">${esc(d.comment || d.template || "")}</td>
@@ -773,16 +776,40 @@ async function renderDocuments(pid, c) {
         <td class="small">${esc(flags(d))}</td>
         <td class="wbs-code">${esc(d.consolidated || d.code)}</td>
         <td><button class="btn small edit-doc" data-id="${d.id}">Edit</button></td>
-      </tr>`).join("") || '<tr><td colspan="11" class="muted">No documents.</td></tr>'}</tbody></table>`;
+      </tr>`;
+  };
+  const head = `<thead><tr><th>Phase</th><th>Document</th><th>Status</th><th>Link</th>
+      <th>Comment</th><th>Owner</th><th>Reviewer</th><th>Approver</th><th>Flags</th><th>Code</th><th></th></tr></thead>`;
+  const phases = [...new Set(active.map(d => d.phase))];
+  const actBody = [];
+  phases.forEach(ph => {
+    const list = active.filter(d => d.phase === ph);
+    const collapsed = state.collapsedDocPhases.has(ph);
+    actBody.push(`<tr class="doc-phase-row" data-phase="${esc(ph)}"><td colspan="11"><span class="collapse-toggle">${collapsed ? "▸" : "▾"}</span> <strong>${esc(ph || "(no phase)")}</strong> <span class="small" style="opacity:.7">(${list.length})</span></td></tr>`);
+    list.forEach(d => actBody.push(rowHTML(d, collapsed)));
+  });
+  const table = (body, emptyMsg) => `<table>${head}<tbody>${body.join("") || `<tr><td colspan="11" class="muted">${emptyMsg}</td></tr>`}</tbody></table>`;
   c.innerHTML = `<div class="toolbar">
       <input id="docs-filter" placeholder="Filter documents…" value="${esc(state.filters.docs || "")}" style="width:220px">
       <button class="btn accent" id="add-doc">+ Add document to list</button>
-      <span class="muted small">"n/a" documents are listed in a separate table at the bottom.</span>
+      <span class="muted small">Click a phase header to collapse/expand it. "n/a" documents are listed in a separate table at the bottom.</span>
     </div>
-    <div class="card"><h3>Documents</h3>${table(active)}</div>
-    ${na.length ? `<div class="card"><h3>n/a documents</h3>${table(na)}</div>` : ""}`;
+    <div class="card"><h3>Documents</h3>${table(actBody, "No documents.")}</div>
+    ${na.length ? `<div class="card"><h3>n/a documents</h3>${table(na.map(d => rowHTML(d, false)), "No n/a documents.")}</div>` : ""}`;
   const filter = c.querySelector("#docs-filter");
   filter.oninput = () => { state.filters.docs = filter.value; renderDocuments(pid, c); };
+  c.querySelectorAll(".doc-phase-row .collapse-toggle").forEach(t => t.onclick = e => {
+    e.stopPropagation();
+    const row = t.closest("tr");
+    const ph = row.dataset.phase;
+    if (state.collapsedDocPhases.has(ph)) state.collapsedDocPhases.delete(ph);
+    else state.collapsedDocPhases.add(ph);
+    const collapsed = state.collapsedDocPhases.has(ph);
+    t.textContent = collapsed ? "▸" : "▾";
+    c.querySelectorAll(`tr[data-phase="${CSS.escape(ph)}"]`).forEach(r => {
+      if (!r.classList.contains("doc-phase-row")) r.classList.toggle("hidden-row", collapsed);
+    });
+  });
   document.getElementById("add-doc").onclick = () => {
     modal("Add document to the list",
       `<p class="small">Documents added here become a master template and are added to <strong>all</strong> projects automatically.</p>` +

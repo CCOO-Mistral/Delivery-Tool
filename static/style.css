@@ -171,3 +171,6 @@ tr.editing td { background: #fff8e6; }
 .gantt-diamond.fat { background: #f4a261; }
 .gantt-diamond.comm { background: #2ec4b6; }
 #wiki-drawer { width: min(640px, 96vw); }
+tr.doc-phase-row td { background: #0b2545; color: #ffffff; cursor: pointer; }
+tr.doc-phase-row td .collapse-toggle { color: #8fd14f; }
+tr.doc-phase-row:hover td { background: #13315c; }
