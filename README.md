@@ -69,6 +69,13 @@ Environment variables:
   refreshed, and user-entered fields (status, dates, owner, comments) are kept;
   nothing is ever deleted from project tables. Existing databases are migrated
   automatically (new columns/tables only).
+- **Excel export/import**: every project view has "⬇ Export project (.xlsx)" (or
+  `GET /api/projects/<id>/export`) which downloads all editable project data
+  (Master Data, WBS, Timeline, OPL, Budget inputs/Payments/Cash Out/Deviations,
+  Documents, Contacts, Class checklist) as a structured workbook, and
+  "⬆ Import updates (.xlsx)" (or `POST /api/projects/<id>/import`) which applies an
+  edited workbook back — existing rows are updated/matched by their keys, new rows
+  are added, nothing is deleted.
 - **Backup**: top bar "⬇ Backup" button (or Library page → "⬇ Backup database",
   or `GET /api/backup`) downloads the whole `delivery.db`. The button turns red and
   a reminder popup appears at startup when more than 7 days have passed since the

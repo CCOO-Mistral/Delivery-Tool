@@ -5,11 +5,13 @@ import os
 import re
 import shutil
 import urllib.request
+import io
 import zipfile
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
+from xml.sax.saxutils import escape as xml_escape
 
-from flask import Flask, jsonify, request, send_from_directory, abort
+from flask import Flask, jsonify, request, send_file, send_from_directory, abort
 
 import db
 
@@ -372,6 +374,481 @@ def backup_db():
     conn.close()
     return send_from_directory(os.path.dirname(db.DB_PATH), os.path.basename(db.DB_PATH),
                                as_attachment=True, download_name="delivery-backup.db")
+
+
+# ---------------------------------------------------------------- excel export / import
+
+SS_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+PROJECT_LABELS = {
+    "name": "Project name", "status": "Status", "delivery_manager": "Delivery Project Manager",
+    "customer": "Customer", "end_customer": "End customer", "delivery_type": "Delivery type",
+    "equipment": "Equipment", "modules_count": "Number of modules",
+    "module_type": "Module type / HP300 version", "regulatory": "Regulatory",
+    "grid_codes": "Grid codes", "contract_date": "Contract date",
+    "first_delivery_date": "First delivery date", "last_delivery_date": "Last delivery date",
+    "shipyard": "Shipyard", "shipyard_country": "Shipyard country", "payment_terms": "Payment terms",
+}
+BUDGET_INPUT_KEYS = ["sales_price", "services_price", "cogs_module", "service_costs", "direct_material"]
+
+
+def _col_letter(i):
+    s = ""
+    i += 1
+    while i:
+        i, r = divmod(i - 1, 26)
+        s = chr(65 + r) + s
+    return s
+
+
+def write_xlsx(sheets):
+    """sheets: list of (name, rows); rows: list of lists of str/number. Returns .xlsx bytes."""
+    parts = {}
+    ct_overrides, wb_sheets, rels = [], [], []
+    for idx, (name, rows) in enumerate(sheets, start=1):
+        ct_overrides.append(
+            f'<Override PartName="/xl/worksheets/sheet{idx}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>')
+        wb_sheets.append(f'<sheet name="{xml_escape(name)}" sheetId="{idx}" r:id="rId{idx}"/>')
+        rels.append(f'<Relationship Id="rId{idx}" Type="{REL_NS}/worksheet" Target="worksheets/sheet{idx}.xml"/>')
+        row_xml = []
+        for ri, row in enumerate(rows, start=1):
+            cells = []
+            for ci, val in enumerate(row):
+                ref = f"{_col_letter(ci)}{ri}"
+                if val is None or val == "":
+                    cells.append(f'<c r="{ref}"/>')
+                elif isinstance(val, bool):
+                    cells.append(f'<c r="{ref}" t="inlineStr"><is><t>{"Yes" if val else "No"}</t></is></c>')
+                elif isinstance(val, (int, float)):
+                    cells.append(f'<c r="{ref}"><v>{val}</v></c>')
+                else:
+                    cells.append(f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{xml_escape(str(val))}</t></is></c>')
+            row_xml.append(f'<row r="{ri}">{"".join(cells)}</row>')
+        parts[f"xl/worksheets/sheet{idx}.xml"] = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<worksheet xmlns="{SS_NS}"><sheetData>{"".join(row_xml)}</sheetData></worksheet>')
+    n = len(sheets)
+    rels.append(f'<Relationship Id="rId{n + 1}" Type="{REL_NS}/styles" Target="styles.xml"/>')
+    parts["[Content_Types].xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        + "".join(ct_overrides) + "</Types>")
+    parts["_rels/.rels"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<Relationships xmlns="{PKG_REL_NS}">'
+        f'<Relationship Id="rId1" Type="{REL_NS}/officeDocument" Target="xl/workbook.xml"/></Relationships>')
+    parts["xl/workbook.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<workbook xmlns="{SS_NS}" xmlns:r="{REL_NS}"><sheets>{"".join(wb_sheets)}</sheets></workbook>')
+    parts["xl/_rels/workbook.xml.rels"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<Relationships xmlns="{PKG_REL_NS}">{"".join(rels)}</Relationships>')
+    parts["xl/styles.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<styleSheet xmlns="{SS_NS}"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
+        '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
+        '<borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs>'
+        '<cellXfs count="1"><xf/></cellXfs></styleSheet>')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in parts.items():
+            z.writestr(name, data)
+    return buf.getvalue()
+
+
+def read_xlsx(data):
+    """Parse .xlsx bytes -> {sheet_name: rows} with rows as lists of strings."""
+    z = zipfile.ZipFile(io.BytesIO(data))
+    shared = []
+    if "xl/sharedStrings.xml" in z.namelist():
+        root = ET.fromstring(z.read("xl/sharedStrings.xml"))
+        for si in root.findall(f"{{{SS_NS}}}si"):
+            shared.append("".join(t.text or "" for t in si.iter(f"{{{SS_NS}}}t")))
+    wb = ET.fromstring(z.read("xl/workbook.xml"))
+    rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+    relmap = {rel.get("Id"): rel.get("Target") for rel in rels}
+    sheets = {}
+    for sheet in wb.find(f"{{{SS_NS}}}sheets"):
+        target = relmap[sheet.get(f"{{{REL_NS}}}id")]
+        if not target.startswith("xl/"):
+            target = "xl/" + target.lstrip("/")
+        rows = []
+        for row in ET.fromstring(z.read(target)).iter(f"{{{SS_NS}}}row"):
+            cells = {}
+            maxc = -1
+            for c in row.findall(f"{{{SS_NS}}}c"):
+                m = re.match(r"([A-Z]+)(\d+)", c.get("r"))
+                col = 0
+                for ch in m.group(1):
+                    col = col * 26 + (ord(ch) - 64)
+                ci = col - 1
+                maxc = max(maxc, ci)
+                t = c.get("t")
+                v = c.find(f"{{{SS_NS}}}v")
+                is_el = c.find(f"{{{SS_NS}}}is")
+                if t == "s" and v is not None:
+                    val = shared[int(v.text)]
+                elif t == "inlineStr" and is_el is not None:
+                    val = "".join(x.text or "" for x in is_el.iter(f"{{{SS_NS}}}t"))
+                elif v is not None:
+                    val = v.text
+                else:
+                    val = ""
+                cells[ci] = val or ""
+            if cells:
+                rows.append([cells.get(i, "") for i in range(maxc + 1)])
+        sheets[sheet.get("name")] = rows
+    return sheets
+
+
+def _sheet_table(sheets, name):
+    rows = sheets.get(name) or []
+    if not rows:
+        return []
+    hdr = [str(h).strip().lower() for h in rows[0]]
+    out = []
+    for r in rows[1:]:
+        if not any(str(c).strip() for c in r):
+            continue
+        rec = {}
+        for i, h in enumerate(hdr):
+            if h:
+                rec[h] = str(r[i]).strip() if i < len(r) else ""
+        out.append(rec)
+    return out
+
+
+def _v_date(s):
+    s = str(s or "").strip()
+    return s if re.match(r"^\d{4}-\d{2}-\d{2}$", s) else ""
+
+
+def _v_float(s):
+    try:
+        return float(str(s).replace(",", ".").strip())
+    except (ValueError, TypeError):
+        return None
+
+
+def _v_int(s):
+    try:
+        return int(float(str(s).replace(",", ".").strip()))
+    except (ValueError, TypeError):
+        return None
+
+
+def _v_bool(s):
+    return 1 if str(s).strip().lower() in ("yes", "true", "1", "x") else 0
+
+
+@app.route("/api/projects/<int:pid>/export")
+def project_export(pid):
+    conn = db.get_db()
+    p = get_project_or_404(conn, pid)
+    sheets = []
+    master = [["Field", "Key", "Value"]]
+    for k in PROJECT_FIELDS:
+        master.append([PROJECT_LABELS.get(k, k), k, p[k] if p[k] is not None else ""])
+    sheets.append(("Master Data", master))
+    wbs = [["Code", "Type", "Parent", "Name", "Doc ref", "Owner", "Planned date", "Actual date", "Status"]]
+    for w in conn.execute("SELECT * FROM wbs WHERE project_id=? ORDER BY pos", (pid,)):
+        wbs.append([w["code"], w["item_type"], w["parent_code"], w["name"], w["doc_ref"],
+                    w["owner"], w["planned_date"], w["actual_date"], w["status"]])
+    sheets.append(("WBS", wbs))
+    tl = [["Milestone", "Name", "Week offset", "Due date", "Done"]]
+    for t in conn.execute("SELECT * FROM timeline WHERE project_id=? ORDER BY milestone_no", (pid,)):
+        tl.append([t["milestone_no"], t["name"], t["week_offset"], t["due_date"], "Yes" if t["done"] else "No"])
+    sheets.append(("Timeline", tl))
+    opl = [["Number", "Status", "Description", "Assignee", "Start", "Due", "Priority", "Blocker", "Blocker description"]]
+    for o in conn.execute("SELECT * FROM opl WHERE project_id=? ORDER BY number", (pid,)):
+        opl.append([o["number"], o["status"], o["description"], o["assignee"], o["start_date"],
+                    o["due_date"], o["priority"], o["blocker"], o["blocker_description"]])
+    sheets.append(("OPL", opl))
+    b = conn.execute("SELECT * FROM budget WHERE project_id=?", (pid,)).fetchone()
+    bi = [["Field", "Key", "Value"]]
+    for k in BUDGET_INPUT_KEYS:
+        bi.append([k.replace("_", " ").title(), k, (b[k] if b else 0) or 0])
+    sheets.append(("Budget Inputs", bi))
+    pm = [["Seq", "Label", "Pct", "Week", "Paid"]]
+    for r in conn.execute("SELECT * FROM payment_milestones WHERE project_id=? ORDER BY seq", (pid,)):
+        pm.append([r["seq"], r["label"], r["pct"], r["week"], "Yes" if r["paid"] else "No"])
+    sheets.append(("Payments", pm))
+    co = [["Week", "Label", "Mode", "Cost", "Pct of DM", "Pct of sales", "Planned", "Forecast", "Actual"]]
+    for r in conn.execute("SELECT * FROM cash_out WHERE project_id=? ORDER BY week, id", (pid,)):
+        co.append([r["week"], r["label"], r["mode"], r["cost"],
+                   r["pct_of_dm"] if r["pct_of_dm"] is not None else "",
+                   r["pct_of_sales"] if r["pct_of_sales"] is not None else "",
+                   r["planned"], r["forecast"], r["actual"]])
+    sheets.append(("Cash Out", co))
+    dv = [["Description", "Amount", "Status", "Billable", "Ref link"]]
+    for r in conn.execute("SELECT * FROM budget_deviations WHERE project_id=? ORDER BY id", (pid,)):
+        dv.append([r["description"], r["amount"], r["status"], r["billable"], r["ref_link"]])
+    sheets.append(("Deviations", dv))
+    docs = [["Code", "Doc name", "Status", "Link", "Comment"]]
+    for r in conn.execute(
+            "SELECT pd.status, pd.link, pd.comment, t.code, t.doc_name FROM project_documents pd"
+            " JOIN doc_templates t ON t.id = pd.template_id WHERE pd.project_id=? ORDER BY t.id", (pid,)):
+        docs.append([r["code"], r["doc_name"], r["status"], r["link"], r["comment"]])
+    sheets.append(("Documents", docs))
+    ct = [["Company", "First name", "Last name", "Role", "Email", "Phone", "Language", "Contact way"]]
+    for r in conn.execute("SELECT * FROM contacts WHERE project_id=? ORDER BY id", (pid,)):
+        ct.append([r["company"], r["first_name"], r["last_name"], r["role"],
+                   r["email"], r["phone"], r["language"], r["contact_way"]])
+    sheets.append(("Contacts", ct))
+    if p["delivery_type"] in ("Marine", "Retrofit"):
+        cl = [["Stage", "Title", "Status", "Comment"]]
+        for r in conn.execute("SELECT * FROM project_class_items WHERE project_id=? ORDER BY stage", (pid,)):
+            cl.append([r["stage"], r["title"], r["status"], r["comment"]])
+        sheets.append(("Class", cl))
+    conn.close()
+    data = write_xlsx(sheets)
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", p["name"]) or "project"
+    return send_file(io.BytesIO(data),
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                     as_attachment=True, download_name=f"{safe}-export.xlsx")
+
+
+@app.route("/api/projects/<int:pid>/import", methods=["POST"])
+def project_import(pid):
+    f = request.files.get("file")
+    if not f:
+        abort(400, description="no file uploaded")
+    try:
+        sheets = read_xlsx(f.read())
+    except Exception:
+        abort(400, description="not a valid .xlsx file")
+    conn = db.get_db()
+    get_project_or_404(conn, pid)
+    stats = {}
+
+    rows = _sheet_table(sheets, "Master Data")
+    sets, vals = [], []
+    for r in rows:
+        key = r.get("key", "").strip().lower()
+        if key in PROJECT_FIELDS:
+            sets.append(f"{key} = ?")
+            vals.append(sanitize(r.get("value", "")))
+    if sets:
+        conn.execute("UPDATE projects SET " + ",".join(sets) + " WHERE id=?", vals + [pid])
+    stats["Master Data"] = len(sets)
+
+    n = 0
+    for r in _sheet_table(sheets, "WBS"):
+        code = sanitize(r.get("code", ""))
+        if not code:
+            continue
+        fields = (sanitize(r.get("type", "") or "activity"), sanitize(r.get("name", "")),
+                  sanitize(r.get("parent", "")), sanitize(r.get("doc ref", "")), sanitize(r.get("owner", "")),
+                  _v_date(r.get("planned date")), _v_date(r.get("actual date")),
+                  sanitize(r.get("status", "") or "Not started"))
+        row = conn.execute("SELECT id FROM wbs WHERE project_id=? AND code=?", (pid, code)).fetchone()
+        if row:
+            conn.execute("UPDATE wbs SET item_type=?, name=?, parent_code=?, doc_ref=?, owner=?,"
+                         " planned_date=?, actual_date=?, status=? WHERE id=?",
+                         fields + (row["id"],))
+        else:
+            pos = conn.execute("SELECT COALESCE(MAX(pos),0)+1 FROM wbs WHERE project_id=?",
+                               (pid,)).fetchone()[0]
+            conn.execute("INSERT INTO wbs(project_id, code, item_type, name, parent_code, doc_ref,"
+                         " owner, planned_date, actual_date, status, pos) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                         (pid, code) + fields + (pos,))
+        n += 1
+    stats["WBS"] = n
+
+    n = 0
+    for r in _sheet_table(sheets, "Timeline"):
+        mno = _v_int(r.get("milestone"))
+        if mno is None:
+            continue
+        due = _v_date(r.get("due date"))
+        done = _v_bool(r.get("done"))
+        wk = _v_int(r.get("week offset"))
+        name = sanitize(r.get("name", ""))
+        row = conn.execute("SELECT milestone_no FROM timeline WHERE project_id=? AND milestone_no=?",
+                           (pid, mno)).fetchone()
+        if row:
+            sets, vals = ["due_date = ?", "done = ?"], [due, done]
+            if wk is not None:
+                sets.append("week_offset = ?")
+                vals.append(wk)
+            if name:
+                sets.append("name = ?")
+                vals.append(name)
+            conn.execute("UPDATE timeline SET " + ",".join(sets) +
+                         " WHERE project_id=? AND milestone_no=?", vals + [pid, mno])
+        else:
+            conn.execute("INSERT INTO timeline(project_id, milestone_no, name, week_offset, due_date, done)"
+                         " VALUES (?,?,?,?,?,?)", (pid, mno, name, wk or 0, due, done))
+        n += 1
+    stats["Timeline"] = n
+
+    n = 0
+    for r in _sheet_table(sheets, "OPL"):
+        num = _v_int(r.get("number"))
+        row = None
+        if num is not None:
+            row = conn.execute("SELECT id FROM opl WHERE project_id=? AND number=?", (pid, num)).fetchone()
+        fields = (sanitize(r.get("status", "") or "Open"), sanitize(r.get("description", "")),
+                  sanitize(r.get("assignee", "")), _v_date(r.get("start")), _v_date(r.get("due")),
+                  sanitize(r.get("priority", "") or "Mid"), sanitize(r.get("blocker", "") or "No"),
+                  sanitize(r.get("blocker description", "")))
+        if row:
+            conn.execute("UPDATE opl SET status=?, description=?, assignee=?, start_date=?, due_date=?,"
+                         " priority=?, blocker=?, blocker_description=? WHERE id=?", fields + (row["id"],))
+        else:
+            if num is None:
+                num = (conn.execute("SELECT COALESCE(MAX(number),0)+1 FROM opl WHERE project_id=?",
+                                    (pid,)).fetchone()[0])
+            conn.execute("INSERT INTO opl(project_id, number, status, description, assignee, start_date,"
+                         " due_date, priority, blocker, blocker_description, created_by)"
+                         " VALUES (?,?,?,?,?,?,?,?,?,?,?)", (pid, num) + fields + (user(),))
+        n += 1
+    stats["OPL"] = n
+
+    conn.execute("INSERT OR IGNORE INTO budget(project_id) VALUES (?)", (pid,))
+    sets, vals = [], []
+    for r in _sheet_table(sheets, "Budget Inputs"):
+        key = r.get("key", "").strip().lower()
+        if key in BUDGET_INPUT_KEYS:
+            sets.append(f"{key} = ?")
+            vals.append(_v_float(r.get("value", "")) or 0)
+    if sets:
+        conn.execute("UPDATE budget SET " + ",".join(sets) + " WHERE project_id=?", vals + [pid])
+    stats["Budget Inputs"] = len(sets)
+
+    n = 0
+    for r in _sheet_table(sheets, "Payments"):
+        seq = _v_int(r.get("seq"))
+        if seq is None:
+            continue
+        label = sanitize(r.get("label", ""))
+        pct = _v_float(r.get("pct")) or 0
+        week = _v_int(r.get("week")) or 0
+        paid = _v_bool(r.get("paid"))
+        row = conn.execute("SELECT id FROM payment_milestones WHERE project_id=? AND seq=?",
+                           (pid, seq)).fetchone()
+        if row:
+            conn.execute("UPDATE payment_milestones SET label=?, pct=?, week=?, paid=? WHERE id=?",
+                         (label, pct, week, paid, row["id"]))
+        else:
+            conn.execute("INSERT INTO payment_milestones(project_id, seq, label, pct, week, paid)"
+                         " VALUES (?,?,?,?,?,?)", (pid, seq, label, pct, week, paid))
+        n += 1
+    stats["Payments"] = n
+
+    n = 0
+    for r in _sheet_table(sheets, "Cash Out"):
+        week = _v_int(r.get("week")) or 0
+        label = sanitize(r.get("label", ""))
+        mode = sanitize(r.get("mode", "") or "fixed")
+        cost = _v_float(r.get("cost")) or 0
+        pct_dm = _v_float(r.get("pct of dm"))
+        pct_sales = _v_float(r.get("pct of sales"))
+        planned = _v_float(r.get("planned")) or 0
+        forecast = _v_float(r.get("forecast")) or 0
+        actual = _v_float(r.get("actual")) or 0
+        row = conn.execute("SELECT id FROM cash_out WHERE project_id=? AND week=? AND label=?",
+                           (pid, week, label)).fetchone()
+        if row:
+            conn.execute("UPDATE cash_out SET mode=?, cost=?, pct_of_dm=?, pct_of_sales=?, planned=?,"
+                         " forecast=?, actual=? WHERE id=?",
+                         (mode, cost, pct_dm, pct_sales, planned, forecast, actual, row["id"]))
+        else:
+            conn.execute("INSERT INTO cash_out(project_id, week, label, cost, pct_of_dm, pct_of_sales,"
+                         " mode, planned, forecast, actual) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                         (pid, week, label, cost, pct_dm, pct_sales, mode, planned, forecast, actual))
+        n += 1
+    stats["Cash Out"] = n
+
+    n = 0
+    for r in _sheet_table(sheets, "Deviations"):
+        desc = sanitize(r.get("description", ""))
+        if not desc:
+            continue
+        amount = _v_float(r.get("amount")) or 0
+        status = sanitize(r.get("status", "") or "Request")
+        billable = sanitize(r.get("billable", "") or "No")
+        ref = sanitize(r.get("ref link", ""))
+        row = conn.execute("SELECT id FROM budget_deviations WHERE project_id=? AND description=?",
+                           (pid, desc)).fetchone()
+        if row:
+            conn.execute("UPDATE budget_deviations SET amount=?, status=?, billable=?, ref_link=? WHERE id=?",
+                         (amount, status, billable, ref, row["id"]))
+        else:
+            conn.execute("INSERT INTO budget_deviations(project_id, description, amount, status, billable,"
+                         " ref_link) VALUES (?,?,?,?,?,?)", (pid, desc, amount, status, billable, ref))
+        n += 1
+    stats["Deviations"] = n
+
+    n = 0
+    for r in _sheet_table(sheets, "Documents"):
+        code = sanitize(r.get("code", ""))
+        t = conn.execute("SELECT id FROM doc_templates WHERE code=?", (code,)).fetchone()
+        if not t:
+            continue
+        status = sanitize(r.get("status", "") or "Missing")
+        link = sanitize(r.get("link", ""))
+        comment = sanitize(r.get("comment", ""))
+        row = conn.execute("SELECT id FROM project_documents WHERE project_id=? AND template_id=?",
+                           (pid, t["id"])).fetchone()
+        if row:
+            conn.execute("UPDATE project_documents SET status=?, link=?, comment=? WHERE id=?",
+                         (status, link, comment, row["id"]))
+        else:
+            conn.execute("INSERT INTO project_documents(project_id, template_id, status, link, comment)"
+                         " VALUES (?,?,?,?,?)", (pid, t["id"], status, link, comment))
+        n += 1
+    stats["Documents"] = n
+
+    n = 0
+    for r in _sheet_table(sheets, "Contacts"):
+        email = sanitize(r.get("email", ""))
+        row = None
+        if email:
+            row = conn.execute("SELECT id FROM contacts WHERE project_id=? AND email=?", (pid, email)).fetchone()
+        if not row:
+            row = conn.execute(
+                "SELECT id FROM contacts WHERE project_id=? AND first_name=? AND last_name=? AND company=?",
+                (pid, sanitize(r.get("first name", "")), sanitize(r.get("last name", "")),
+                 sanitize(r.get("company", "")))).fetchone()
+        fields = tuple(sanitize(r.get(k, "")) for k in
+                       ("company", "first name", "last name", "role", "email", "phone", "language", "contact way"))
+        cols = ("company", "first_name", "last_name", "role", "email", "phone", "language", "contact_way")
+        if row:
+            conn.execute("UPDATE contacts SET " + ",".join(f"{c} = ?" for c in cols) + " WHERE id=?",
+                         fields + (row["id"],))
+        else:
+            conn.execute("INSERT INTO contacts(project_id, " + ",".join(cols) + ") VALUES (?" +
+                         ",?" * len(cols) + ")", (pid,) + fields)
+        n += 1
+    stats["Contacts"] = n
+
+    n = 0
+    for r in _sheet_table(sheets, "Class"):
+        stage = _v_int(r.get("stage"))
+        if stage is None:
+            continue
+        status = sanitize(r.get("status", "") or "Not started")
+        comment = sanitize(r.get("comment", ""))
+        row = conn.execute("SELECT id FROM project_class_items WHERE project_id=? AND stage=?",
+                           (pid, stage)).fetchone()
+        if row:
+            conn.execute("UPDATE project_class_items SET status=?, comment=? WHERE id=?",
+                         (status, comment, row["id"]))
+            n += 1
+    stats["Class"] = n
+
+    bump_rev(conn)
+    audit(conn, pid, "import", "xlsx", "import", json.dumps(stats))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "stats": stats})
 
 
 # ---------------------------------------------------------------- projects / portfolio

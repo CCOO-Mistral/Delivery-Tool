@@ -411,8 +411,34 @@ async function viewProject(pid, tab, project) {
     <h1>${esc(p.name)} <span class="badge ${esc((p.status || "ongoing").toLowerCase())}">${esc(p.status)}</span></h1>
     <div class="tabs">${tabs.map(([k, label]) =>
       `<a href="#/project/${pid}/${k}" class="${tab === k ? "active" : ""}">${label}</a>`).join("")}</div>
+    <div class="toolbar">
+      <a class="btn small" href="/api/projects/${pid}/export" title="Download all editable project data as an Excel (.xlsx) file">⬇ Export project (.xlsx)</a>
+      <button class="btn small" id="import-btn" title="Import updates from a previously exported Excel file (existing rows are updated, nothing is deleted)">⬆ Import updates (.xlsx)</button>
+      <input type="file" id="import-file" accept=".xlsx" style="display:none">
+      <span class="muted small">Export → edit in Excel → import back here to apply the updates.</span>
+    </div>
     <div id="tab-content"><div class="loading">Loading…</div></div>`;
   const c = document.getElementById("tab-content");
+  const impFile = document.getElementById("import-file");
+  document.getElementById("import-btn").onclick = () => impFile.click();
+  impFile.onchange = async () => {
+    const file = impFile.files[0];
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      const res = await fetch(`/api/projects/${pid}/import`, {
+        method: "POST",
+        headers: { "X-User-Name": state.user || "anonymous" },
+        body: fd,
+      });
+      const data = res.ok ? await res.json() : { error: await res.text() };
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      alert("Import complete:\n" + Object.entries(data.stats || {}).map(([k, v]) => `${k}: ${v} row(s)`).join("\n"));
+      impFile.value = "";
+      render();
+    } catch (e) { alert(e.message); }
+  };
   if (tab === "dashboard") await renderDashboard(pid, c);
   else if (tab === "master") await renderMaster(pid, p, c);
   else if (tab === "wbs") await renderWbs(pid, c);
