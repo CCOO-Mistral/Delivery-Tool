@@ -70,6 +70,8 @@ tr:hover td { background: #f7fafc; }
 .btn.accent:hover { filter: brightness(1.06); }
 .btn.ghost { background: transparent; border-color: rgba(255,255,255,.4); color: #fff; }
 .btn.ghost:hover { background: rgba(255,255,255,.1); }
+#backup-btn.overdue { background: var(--danger); border-color: var(--danger); color: #fff; }
+#backup-btn.overdue:hover { background: #c92f3b; }
 .btn.small { padding: 3px 9px; font-size: 12px; }
 .btn.danger { background: var(--danger); border-color: var(--danger); }
 .btn:disabled { opacity: .5; cursor: default; }

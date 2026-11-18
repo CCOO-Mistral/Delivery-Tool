@@ -186,8 +186,9 @@ def index():
 def rev():
     conn = db.get_db()
     r = conn.execute("SELECT value FROM meta WHERE key = 'rev'").fetchone()
+    b = conn.execute("SELECT value FROM meta WHERE key = 'last_backup'").fetchone()
     conn.close()
-    return jsonify({"rev": int(r["value"])})
+    return jsonify({"rev": int(r["value"]), "last_backup": b["value"] if b else None})
 
 
 @app.route("/api/log")
@@ -364,6 +365,11 @@ def library_delete(fid):
 @app.route("/api/backup")
 def backup_db():
     """Download the whole SQLite database (all entered project data)."""
+    conn = db.get_db()
+    conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('last_backup', ?)",
+                 (str(int(datetime.now().timestamp() * 1000)),))
+    conn.commit()
+    conn.close()
     return send_from_directory(os.path.dirname(db.DB_PATH), os.path.basename(db.DB_PATH),
                                as_attachment=True, download_name="delivery-backup.db")
 

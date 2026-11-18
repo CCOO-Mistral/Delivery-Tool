@@ -1231,9 +1231,32 @@ async function toggleWiki() {
   });
 }
 
+const backupOverdue = lb => !lb || (Date.now() - Number(lb)) > 7 * 864e5;
+function updateBackupBtn(lb) {
+  const b = document.getElementById("backup-btn");
+  if (b) b.classList.toggle("overdue", backupOverdue(lb));
+}
+
+async function backupReminder() {
+  try {
+    const r = await api("/rev");
+    updateBackupBtn(r.last_backup);
+    if (backupOverdue(r.last_backup)) {
+      const days = r.last_backup ? Math.floor((Date.now() - Number(r.last_backup)) / 864e5) : null;
+      modal("Backup reminder",
+        `<p>${days === null ? "No database backup has been downloaded yet." : `The last database backup was downloaded ${days} day${days === 1 ? "" : "s"} ago (more than 7 days).`}</p>
+         <p>Download a backup copy of the database now to protect all entered project data. Use the <strong>⬇ Backup</strong> button in the top bar — it turns red when more than 7 days have passed since the last download.</p>`,
+        [{ label: "⬇ Download backup now", cls: "accent", fn: () => { window.location.href = "/api/backup"; closeModal(); } },
+         { label: "Remind me later", fn: closeModal }]);
+    }
+  } catch (e) { /* server not reachable yet */ }
+}
+
 async function pollRev() {
   try {
     const r = await api("/rev");
+    state.lastBackup = r.last_backup;
+    updateBackupBtn(r.last_backup);
     if (state.rev !== -1 && r.rev !== state.rev) {
       const ae = document.activeElement;
       const editing = ae && ["INPUT", "TEXTAREA", "SELECT"].includes(ae.tagName);
@@ -1258,3 +1281,4 @@ window.addEventListener("hashchange", render);
 render();
 setInterval(pollRev, 3000);
 pollRev();
+backupReminder();

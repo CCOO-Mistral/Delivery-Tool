@@ -69,8 +69,10 @@ Environment variables:
   refreshed, and user-entered fields (status, dates, owner, comments) are kept;
   nothing is ever deleted from project tables. Existing databases are migrated
   automatically (new columns/tables only).
-- **Backup**: Library page → "⬇ Backup database" downloads the whole
-  `delivery.db` (or `GET /api/backup`). `delivery.db` is the only file with your
+- **Backup**: top bar "⬇ Backup" button (or Library page → "⬇ Backup database",
+  or `GET /api/backup`) downloads the whole `delivery.db`. The button turns red and
+  a reminder popup appears at startup when more than 7 days have passed since the
+  last backup download. `delivery.db` is the only file with your
   data — it is git-ignored, so back it up regularly.
 - `static/` — single-page frontend (index.html, app.js, style.css)
 - `uploads/` — library files (runtime)
