@@ -300,21 +300,19 @@ function renderPortfolioTimeline(events) {
     return `${y}-${m}-${dd}`;
   };
   const dates = events.map(e => e.date).sort();
-  const min = new Date(dates[0] + "T00:00:00");
-  const max = new Date(dates[dates.length - 1] + "T00:00:00");
-  min.setDate(min.getDate() - 28);   // 4 weeks of visual padding on each side
-  max.setDate(max.getDate() + 28);
   const today = new Date(); today.setHours(0, 0, 0, 0);
+  // always include today in the range, then pad 4 weeks on each side
+  const min = new Date(Math.min(new Date(dates[0] + "T00:00:00"), today));
+  const max = new Date(Math.max(new Date(dates[dates.length - 1] + "T00:00:00"), today));
+  min.setDate(min.getDate() - 28);
+  max.setDate(max.getDate() + 28);
   const spanDays = Math.max((max - min) / 864e5, 7);
   const px = d => ((new Date(d + "T00:00:00") - min) / 864e5 / spanDays) * 100;
   const ticks = [];
   for (let d = new Date(min); d <= max; d.setDate(d.getDate() + 7)) {
     ticks.push(`<div class="ptl-tick" style="left:${px(iso(d))}%">W${isoWeek(d)}</div>`);
   }
-  let todayLine = "";
-  if (today >= min && today <= max) {
-    todayLine = `<div class="ptl-today" style="left:${px(iso(today))}%"><span>today ${iso(today)}</span></div>`;
-  }
+  const todayLine = `<div class="ptl-today" style="left:calc(260px + (100% - 260px) * ${px(iso(today)) / 100})"><span>today ${iso(today)}</span></div>`;
   const byProject = {};
   events.forEach(e => {
     (byProject[e.project_id] = byProject[e.project_id] || { name: e.project, pid: e.project_id, ev: [] }).ev.push(e);
