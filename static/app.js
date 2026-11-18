@@ -370,6 +370,21 @@ async function renderWbs(pid, c) {
   const items = await api(`/projects/${pid}/wbs`);
   const p = await api(`/projects/${pid}`);
   const depth = code => code.split(".").length;
+  if (!state.collapsedWbs) {
+    state.collapsedWbs = new Set(items
+      .filter(w => ["phase", "gate", "milestone"].includes(w.item_type))
+      .map(w => w.code));
+  }
+  const parentOf = {};
+  items.forEach(w => { parentOf[w.code] = w.parent_code; });
+  const ancestors = code => {
+    const out = [];
+    let cur = parentOf[code] || "";
+    while (cur) { out.push(cur); cur = parentOf[cur] || ""; }
+    return out;
+  };
+  const isCollapsed = code => state.collapsedWbs.has(code);
+  const isHidden = code => ancestors(code).some(isCollapsed);
   const filtered = filterRows(items, "wbs", ["code", "name", "owner", "doc_ref", "status"]);
   const statusBadge = s => `<span class="badge ${s === "Done" || s === "n/a" ? "done" : s === "In progress" ? "inprogress" : s === "Blocked" ? "blocked" : "low"}">${esc(s)}</span>`;
   c.innerHTML = `<div class="toolbar">
@@ -380,8 +395,8 @@ async function renderWbs(pid, c) {
     <div class="card"><table id="wbs-table">
       <thead><tr><th>Code</th><th>Type</th><th>Status</th><th>Name</th><th>Owner</th>
         <th>Planned</th><th>Actual</th><th>Reference</th><th></th></tr></thead>
-      <tbody>${filtered.map(w => `<tr class="${w.item_type}-row${w.status === "Done" || w.status === "n/a" ? " done-row" : ""}" data-code="${esc(w.code)}" data-parent="${esc(w.parent_code)}" data-id="${w.id}">
-        <td class="wbs-code">${w.item_type === "phase" || w.item_type === "gate" || w.item_type === "milestone" ? '<span class="collapse-toggle">▾</span> ' : ""}${esc(w.code)}</td>
+      <tbody>${filtered.map(w => `<tr class="${w.item_type}-row${w.status === "Done" || w.status === "n/a" ? " done-row" : ""}${isHidden(w.code) ? " hidden-row" : ""}" data-code="${esc(w.code)}" data-parent="${esc(w.parent_code)}" data-id="${w.id}">
+        <td class="wbs-code">${w.item_type === "phase" || w.item_type === "gate" || w.item_type === "milestone" ? `<span class="collapse-toggle">${isCollapsed(w.code) ? "▸" : "▾"}</span> ` : ""}${esc(w.code)}</td>
         <td>${esc(w.item_type)}</td>
         <td class="cell-status">${statusBadge(w.status)}</td>
         <td class="cell-name" style="padding-left:${depth(w.code) * 14}px">${esc(w.name)}</td>
@@ -398,14 +413,12 @@ async function renderWbs(pid, c) {
   filter.oninput = () => { state.filters.wbs = filter.value; renderWbs(pid, c); };
   c.querySelectorAll(".collapse-toggle").forEach(t => t.onclick = e => {
     e.stopPropagation();
-    const row = t.closest("tr");
-    const code = row.dataset.code;
-    const collapsed = row.classList.toggle("collapsed");
-    t.textContent = collapsed ? "▸" : "▾";
-    c.querySelectorAll("tr").forEach(r => {
-      if (r.dataset.parent === code || (r.dataset.parent || "").startsWith(code + ".")) {
-        r.classList.toggle("hidden-row", collapsed);
-      }
+    const code = t.closest("tr").dataset.code;
+    if (state.collapsedWbs.has(code)) state.collapsedWbs.delete(code);
+    else state.collapsedWbs.add(code);
+    t.textContent = state.collapsedWbs.has(code) ? "▸" : "▾";
+    c.querySelectorAll("#wbs-table tbody tr").forEach(r => {
+      r.classList.toggle("hidden-row", isHidden(r.dataset.code));
     });
   });
   c.querySelectorAll("#wbs-table tbody tr").forEach(row => row.onclick = e => {
