@@ -18,6 +18,9 @@ Environment variables:
 | `DELIVERY_HOST` | `127.0.0.1` | Bind address (keep loopback unless you add authentication) |
 | `DELIVERY_DB` | `./delivery.db` | SQLite database file (swap for a cloud DB later) |
 | `LIBRARY_PASSWORD_HASH` | SHA-256 of the library password from the Data tab | Library upload/delete password (only the hash is stored in code) |
+| `MISTRAL_API_KEY` | unset | Enables the ✨ AI summary (Portfolio + project Dashboard) via the Mistral API. Without it, a built-in rule-based summary is shown instead |
+| `MISTRAL_MODEL` | `mistral-small-latest` | Model used for AI summaries |
+| `MISTRAL_BASE_URL` | `https://api.mistral.ai/v1` | API base URL (override for proxies/local gateways) |
 
 ## Features (mapped to the workbook tabs)
 
@@ -81,8 +84,25 @@ Environment variables:
 - Faded customer photos: drop them into `static/img/bg.jpg` (used at low opacity as
   the page background).
 
-## Deployment note
+## AI assistant
 
-The app binds to `127.0.0.1` by default. For real multi-user use, deploy behind
-HTTPS with authentication (e.g. a reverse proxy with SSO) and point `DELIVERY_DB`
-at a shared/cloud database.
+- Portfolio page and project Dashboard have an **✨ AI summary** button. It gathers
+  the relevant data server-side (projects, critical/blocked OPLs, milestones, WBS
+  progress, budget, class checklist) and asks Mistral for a markdown report with
+  analytics, critical items and suggested actions (`POST /api/ai/summary`).
+- Set `MISTRAL_API_KEY` on the machine running the app to enable Mistral AI.
+  Without a key, the endpoint returns a rule-based local summary instead.
+- The key is only read from the environment and never stored or logged.
+
+## Run as an independent web app / embed in another app
+
+- The app is a self-contained web application: Flask serves both the UI and a plain
+  JSON REST API. To run it on a server for several users:
+  `DELIVERY_HOST=0.0.0.0 DELIVERY_PORT=5000 python3 app.py` — put it behind a
+  reverse proxy (nginx/Caddy) with HTTPS and authentication (SSO/basic auth).
+  `DELIVERY_DB` can point at a shared location (or migrate to PostgreSQL later);
+  the AI summaries work unchanged via `MISTRAL_API_KEY` on the server.
+- To embed in another web app: call the REST endpoints directly, e.g.
+  `POST /api/ai/summary {"question": "..."}` returns `{ai, text}` markdown, and
+  `GET /api/projects` returns the portfolio JSON. All endpoints speak JSON and take
+  an `X-User-Name` header for the change log.

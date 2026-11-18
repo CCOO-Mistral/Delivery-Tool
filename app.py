@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import urllib.request
 import zipfile
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
@@ -609,6 +610,202 @@ def dashboard(pid):
         "budget": dict(b) if b else None,
         "modules": modules,
     })
+
+
+# ---------------------------------------------------------------- AI assistant
+
+MISTRAL_API_KEY = os.environ.get("MISTRAL_API_KEY", "")
+MISTRAL_MODEL = os.environ.get("MISTRAL_MODEL", "mistral-small-latest")
+MISTRAL_BASE_URL = os.environ.get("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
+
+
+def gather_context(conn, pid=None):
+    """Collect a compact data context for the AI summary (portfolio or one project)."""
+    today = date.today()
+    ctx = {"generated_at": datetime.now().isoformat(timespec="seconds"), "today": today.isoformat()}
+    if pid:
+        p = conn.execute("SELECT * FROM projects WHERE id = ?", (pid,)).fetchone()
+        if p is None:
+            return None
+        ctx["scope"] = "project"
+        ctx["project"] = dict(p)
+        ctx["opl"] = rows_to_dicts(conn.execute(
+            "SELECT number, status, description, assignee, start_date, due_date, priority, blocker,"
+            " blocker_description FROM opl WHERE project_id = ? ORDER BY number", (pid,)).fetchall())
+        ctx["timeline"] = rows_to_dicts(conn.execute(
+            "SELECT milestone_no, name, week_offset, due_date, done FROM timeline"
+            " WHERE project_id = ? ORDER BY milestone_no", (pid,)).fetchall())
+        ctx["wbs_status_counts"] = rows_to_dicts(conn.execute(
+            "SELECT item_type, status, COUNT(*) AS n FROM wbs WHERE project_id = ?"
+            " GROUP BY item_type, status ORDER BY item_type, status", (pid,)).fetchall())
+        ctx["wbs_open_items"] = rows_to_dicts(conn.execute(
+            "SELECT code, item_type, name, owner, status FROM wbs WHERE project_id = ?"
+            " AND status IN ('In progress', 'Blocked') ORDER BY pos LIMIT 50", (pid,)).fetchall())
+        b = conn.execute("SELECT * FROM budget WHERE project_id = ?", (pid,)).fetchone()
+        ctx["budget"] = dict(b) if b else {}
+        ctx["budget_deviations"] = rows_to_dicts(conn.execute(
+            "SELECT description, amount, status, billable FROM budget_deviations WHERE project_id = ?",
+            (pid,)).fetchall())
+        ctx["payments"] = rows_to_dicts(conn.execute(
+            "SELECT seq, label, pct, week, paid FROM payment_milestones WHERE project_id = ? ORDER BY seq",
+            (pid,)).fetchall())
+        ctx["documents_status"] = rows_to_dicts(conn.execute(
+            "SELECT pd.status, COUNT(*) AS n FROM project_documents pd WHERE pd.project_id = ?"
+            " GROUP BY pd.status", (pid,)).fetchall())
+        if p["delivery_type"] in ("Marine", "Retrofit"):
+            ctx["class_checklist"] = rows_to_dicts(conn.execute(
+                "SELECT stage, title, status, comment FROM project_class_items WHERE project_id = ?"
+                " ORDER BY stage", (pid,)).fetchall())
+    else:
+        ctx["scope"] = "portfolio"
+        ctx["projects"] = rows_to_dicts(conn.execute(
+            "SELECT p.id, p.name, p.status, p.delivery_manager, p.customer, p.delivery_type,"
+            " p.equipment, p.modules_count, p.module_type, p.contract_date, p.first_delivery_date,"
+            " p.last_delivery_date, p.shipyard,"
+            " (SELECT COUNT(*) FROM opl o WHERE o.project_id = p.id AND o.status != 'Closed') AS open_points,"
+            " (SELECT COUNT(*) FROM opl o WHERE o.project_id = p.id AND o.status != 'Closed'"
+            "   AND (o.priority = 'Critical' OR o.blocker = 'Yes')) AS crit_blocked"
+            " FROM projects p ORDER BY p.id").fetchall())
+        ctx["critical_blocked_opl"] = rows_to_dicts(conn.execute(
+            "SELECT o.number, o.description, o.assignee, o.due_date, o.priority, o.blocker,"
+            " p.name AS project, p.id AS project_id FROM opl o JOIN projects p ON p.id = o.project_id"
+            " WHERE o.status != 'Closed' AND (o.priority = 'Critical' OR o.blocker = 'Yes')"
+            " ORDER BY o.due_date LIMIT 50").fetchall())
+        ctx["upcoming_milestones"] = []
+        for p in ctx["projects"]:
+            if not p["contract_date"]:
+                continue
+            base = parse_date(p["contract_date"])
+            for mno in (9, 13, 14):
+                t = conn.execute(
+                    "SELECT week_offset, due_date, done FROM timeline WHERE project_id=? AND milestone_no=?",
+                    (p["id"], mno)).fetchone()
+                if t and not t["done"]:
+                    due = t["due_date"] or (base + timedelta(weeks=t["week_offset"])).isoformat()
+                    ctx["upcoming_milestones"].append(
+                        {"project": p["name"], "milestone_no": mno, "due": due})
+    return ctx
+
+
+def local_summary(ctx):
+    """Rule-based fallback summary (no external API needed)."""
+    lines = []
+    if ctx.get("scope") == "portfolio":
+        ps = ctx["projects"]
+        lines.append(f"# Portfolio summary ({ctx['today']})")
+        lines.append(f"- {len(ps)} projects: "
+                     f"{sum(1 for p in ps if p['status'] == 'Ongoing')} ongoing, "
+                     f"{sum(1 for p in ps if p['status'] == 'Closed')} closed")
+        lines.append(f"- Open points total: {sum(p['open_points'] for p in ps)}; "
+                     f"critical/blocked: {sum(p['crit_blocked'] for p in ps)}")
+        crit = ctx["critical_blocked_opl"]
+        if crit:
+            lines.append("\n## Critical / blocked open points")
+            for o in crit[:15]:
+                lines.append(f"- **{o['project']}** #{o['number']} {o['description']} "
+                             f"(owner: {o['assignee'] or '—'}, due: {o['due_date'] or '—'}, "
+                             f"{o['priority']}{', BLOCKED' if o['blocker'] == 'Yes' else ''})")
+        no_cd = [p["name"] for p in ps if not p["contract_date"]]
+        if no_cd:
+            lines.append("\n## Missing contract date (timeline cannot be computed)")
+            lines += [f"- {n}" for n in no_cd]
+        up = sorted(ctx["upcoming_milestones"], key=lambda x: x["due"])[:10]
+        if up:
+            lines.append("\n## Upcoming key milestones")
+            lines += [f"- {u['project']}: M{u['milestone_no']} due {u['due']}" for u in up]
+        lines.append("\n## Suggested actions")
+        if crit:
+            lines.append("- Assign owners and dates to all critical/blocked points above; review them in the weekly delivery meeting.")
+        if no_cd:
+            lines.append("- Fill in contract dates so timelines compute automatically.")
+        lines.append("- Check each project's OPL tab and Timeline for red diamonds (critical/blocked points).")
+    else:
+        p = ctx["project"]
+        lines.append(f"# Project summary: {p['name']} ({ctx['today']})")
+        lines.append(f"- Status: {p['status']}; delivery manager: {p['delivery_manager'] or '—'}; "
+                     f"type: {p['delivery_type'] or '—'}; equipment: {p['equipment'] or '—'}; "
+                     f"modules: {p['modules_count']}")
+        opl = ctx["opl"]
+        open_o = [o for o in opl if o["status"] != "Closed"]
+        crit = [o for o in open_o if o["priority"] == "Critical" or o["blocker"] == "Yes"]
+        lines.append(f"- Open points: {len(open_o)}; critical/blocked: {len(crit)}")
+        if crit:
+            lines.append("\n## Critical / blocked points")
+            for o in crit:
+                lines.append(f"- #{o['number']} {o['description']} (owner: {o['assignee'] or '—'}, "
+                             f"due: {o['due_date'] or '—'})")
+        ms = [m for m in ctx["timeline"] if not m["done"]]
+        if ms:
+            lines.append("\n## Next milestones")
+            for m in ms[:5]:
+                lines.append(f"- M{m['milestone_no']} {m['name']} — {m['due_date'] or 'no date'}")
+        wbs = ctx["wbs_status_counts"]
+        done = sum(r["n"] for r in wbs if r["status"] in ("Done", "n/a"))
+        total = sum(r["n"] for r in wbs)
+        lines.append(f"\n## WBS progress: {done}/{total} items done or n/a")
+        if ctx.get("budget"):
+            b = ctx["budget"]
+            lines.append(f"- Budget inputs: sales/module €{b['sales_price']}, services €{b['services_price']}, "
+                         f"COGS/module €{b['cogs_module']}, direct material €{b['direct_material']}")
+        dev = [d for d in ctx["budget_deviations"] if d["status"] != "Closed"]
+        if dev:
+            lines.append(f"- Open budget deviations: {len(dev)}, total €{sum(d['amount'] for d in dev):,.0f}")
+        if ctx.get("class_checklist"):
+            cc = ctx["class_checklist"]
+            done_cc = sum(1 for c in cc if c["status"] == "Done")
+            lines.append(f"- Class/PED checklist: {done_cc}/{len(cc)} stages done")
+        lines.append("\n## Suggested actions")
+        if crit:
+            lines.append("- Resolve or re-plan the critical/blocked points above first — they also show as red diamonds on the Timeline.")
+        if ms:
+            lines.append(f"- Prepare for M{ms[0]['milestone_no']} ({ms[0]['name']}) — check its WBS activities on the Timeline tab.")
+        lines.append("- Keep Master Data complete (contract date drives the timeline; shipyard fields for Marine).")
+    return "\n".join(lines)
+
+
+@app.route("/api/ai/summary", methods=["POST"])
+def ai_summary():
+    d = body()
+    pid = d.get("project_id")
+    question = d.get("question", "")
+    conn = db.get_db()
+    ctx = gather_context(conn, int(pid) if pid else None)
+    conn.close()
+    if ctx is None:
+        return jsonify({"error": "Project not found"}), 404
+    if not MISTRAL_API_KEY:
+        return jsonify({"ai": False, "text": local_summary(ctx),
+                        "note": "MISTRAL_API_KEY is not set — this is the built-in rule-based summary. "
+                                "Set the MISTRAL_API_KEY environment variable to enable Mistral AI summaries."})
+    system = ("You are a delivery-management analyst for Climeon HP300 projects. "
+              "Given the JSON context, produce a concise markdown report: current status, "
+              "key analytics (counts, trends, dates), the most critical items (critical/blocked open points, "
+              "upcoming milestones, open budget deviations, class/PED stages), and 3-6 concrete suggested actions. "
+              "Use headings and bullets. Be factual; only use the provided data.")
+    user_msg = (question + "\n\nContext JSON:\n" + json.dumps(ctx, ensure_ascii=False, default=str))
+    payload = {
+        "model": MISTRAL_MODEL,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user_msg}],
+        "temperature": 0.3,
+    }
+    try:
+        req = urllib.request.Request(
+            MISTRAL_BASE_URL.rstrip("/") + "/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": "Bearer " + MISTRAL_API_KEY, "Content-Type": "application/json"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        text = data["choices"][0]["message"]["content"]
+        audit_ctx = pid if pid else None
+        conn = db.get_db()
+        audit(conn, audit_ctx, "ai_summary", 0, "request", (ctx.get("scope") or "") + ": " + question[:120])
+        conn.commit()
+        conn.close()
+        return jsonify({"ai": True, "text": text})
+    except Exception as e:
+        return jsonify({"ai": False, "error": f"AI request failed: {e}",
+                        "text": local_summary(ctx)}), 502
 
 
 # ---------------------------------------------------------------- WBS

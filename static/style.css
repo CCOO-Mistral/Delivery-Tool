@@ -174,3 +174,9 @@ tr.editing td { background: #fff8e6; }
 tr.doc-phase-row td { background: #0b2545; color: #ffffff; cursor: pointer; }
 tr.doc-phase-row td .collapse-toggle { color: #8fd14f; }
 tr.doc-phase-row:hover td { background: #13315c; }
+.ai-body h1 { font-size: 20px; margin: 10px 0 6px; }
+.ai-body h2 { font-size: 17px; margin: 12px 0 5px; }
+.ai-body h3 { font-size: 15px; margin: 10px 0 4px; }
+.ai-body ul { padding-left: 20px; margin: 4px 0; }
+.ai-body p { margin: 4px 0; }
+.ai-body li { margin-bottom: 3px; }
