@@ -98,20 +98,26 @@ def parse_wbs(rows):
             if act:
                 milestones[mkey]["activities"].append(
                     {"name": act, "doc_ref": cell(r, 8), "owner": cell(r, 9)})
+        # Hierarchy: phase contains its milestones (each with activities) and
+        # ENDS with its gate (the overarching, phase-ending milestone).
+        # Codes stay a.b.c.d: a=phase, b=gate worked towards, c=milestone, d=activity.
         wbs = []
         for p in phases:
-            wbs.append({"code": p["num"], "type": "phase", "name": p["name"],
+            a = p["num"]
+            wbs.append({"code": a, "type": "phase", "name": p["name"],
                         "parent": "", "doc_ref": "", "owner": ""})
-        for g in gates:
-            wbs.append({"code": f'{g["phase"]}.{g["num"]}', "type": "gate", "name": g["name"],
-                        "parent": g["phase"], "doc_ref": "", "owner": ""})
-        for m in sorted(milestones.values(), key=lambda x: int(x["num"])):
-            code = f'{m["phase"]}.{m["gate"]}.{m["num"]}'
-            wbs.append({"code": code, "type": "milestone", "name": m["name"],
-                        "parent": f'{m["phase"]}.{m["gate"]}', "doc_ref": "", "owner": ""})
-            for i, a in enumerate(m["activities"], start=1):
-                wbs.append({"code": f"{code}.{i}", "type": "activity", "name": a["name"],
-                            "parent": code, "doc_ref": a["doc_ref"], "owner": a["owner"]})
+            for m in sorted((m for m in milestones.values() if m["phase"] == a),
+                            key=lambda x: int(x["num"])):
+                code = f'{a}.{m["gate"]}.{m["num"]}'
+                wbs.append({"code": code, "type": "milestone", "name": m["name"],
+                            "parent": a, "doc_ref": "", "owner": ""})
+                for i, act in enumerate(m["activities"], start=1):
+                    wbs.append({"code": f"{code}.{i}", "type": "activity", "name": act["name"],
+                                "parent": code, "doc_ref": act["doc_ref"], "owner": act["owner"]})
+            for g in gates:
+                if g["phase"] == a:
+                    wbs.append({"code": f'{a}.{g["num"]}', "type": "gate", "name": g["name"],
+                                "parent": a, "doc_ref": "", "owner": ""})
         return wbs, len(phases), len(gates), len(milestones), \
             sum(len(m["activities"]) for m in milestones.values())
 

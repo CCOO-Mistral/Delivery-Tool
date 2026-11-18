@@ -390,6 +390,18 @@ def sync_standards(conn):
                     "INSERT INTO wbs(project_id, code, item_type, name, parent_code, doc_ref, owner, pos)"
                     " VALUES (?,?,?,?,?,?,?,?)",
                     (pid, w["code"], w["type"], w["name"], w["parent"], w["doc_ref"], w["owner"], pos))
+        # re-order standard rows per the standard (phase -> milestones -> gate last),
+        # custom user-added rows keep their relative order at the end
+        order = {(w["type"], w["name"]): i for i, w in enumerate(wbs_std)}
+        rows = conn.execute(
+            "SELECT id, item_type, name FROM wbs WHERE project_id = ? ORDER BY pos", (pid,)).fetchall()
+        std_rows = sorted((r for r in rows if (r["item_type"], r["name"]) in order),
+                          key=lambda r: order[(r["item_type"], r["name"])])
+        custom_rows = [r for r in rows if (r["item_type"], r["name"]) not in order]
+        for i, r in enumerate(std_rows):
+            conn.execute("UPDATE wbs SET pos=? WHERE id=?", (i, r["id"]))
+        for j, r in enumerate(custom_rows):
+            conn.execute("UPDATE wbs SET pos=? WHERE id=?", (len(std_rows) + j, r["id"]))
 
         # merge timeline rows per project (keep manual due_date / done)
         for t in tl_std:

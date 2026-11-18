@@ -462,7 +462,13 @@ async function renderTimeline(pid, c) {
   const data = await api(`/projects/${pid}/timeline?module=${state.moduleIdx || 0}`);
   const wbs = await api(`/projects/${pid}/wbs`);
   const wbsStatus = {};
-  wbs.forEach(w => { if (w.item_type === "milestone") wbsStatus[w.code] = w.status; });
+  const mnoToCode = {};
+  wbs.forEach(w => {
+    if (w.item_type === "milestone") {
+      wbsStatus[w.code] = w.status;
+      mnoToCode[w.code.split(".")[2]] = w.code;
+    }
+  });
   const actsByMilestone = {};
   wbs.forEach(w => { if (w.item_type === "activity") (actsByMilestone[w.parent_code] = actsByMilestone[w.parent_code] || []).push(w); });
   const modules = data.modules || 1;
@@ -470,10 +476,8 @@ async function renderTimeline(pid, c) {
   const shiftOf = mno => (mno > 6 ? 4 * midx : 0);
   const maxWeek = Math.max(82, ...data.milestones.map(m => m.week_offset + shiftOf(m.milestone_no))) + 4;
   const pw = ganttZoom;
-  const msColor = m => {
-    const gate = Math.min(Math.floor((m.milestone_no - 1) / 3) + 1, 5);
-    return WBS_STATUS_COLORS[wbsStatus[`${gate}.${gate}.${m.milestone_no}`]] || "var(--navy-2)";
-  };
+  const msColor = m =>
+    WBS_STATUS_COLORS[wbsStatus[mnoToCode[String(m.milestone_no)]] || ""] || "var(--navy-2)";
   const headTicks = [];
   for (let w = 0; w <= maxWeek; w++) {
     if (pw >= 14 || w % 4 === 0) headTicks.push(`<div class="gantt-tick" style="width:${pw}px">W${w}</div>`);
@@ -525,8 +529,7 @@ async function renderTimeline(pid, c) {
   c.querySelector("#module-sel").onchange = e => { state.moduleIdx = Number(e.target.value); render(); };
   c.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => { ganttZoom = Number(b.dataset.zoom); render(); });
   const showActivities = mno => {
-    const gate = Math.min(Math.floor((mno - 1) / 3) + 1, 5);
-    const code = `${gate}.${gate}.${mno}`;
+    const code = mnoToCode[String(mno)] || "";
     const acts = actsByMilestone[code] || [];
     const m = data.milestones.find(x => x.milestone_no === mno);
     c.querySelector("#ms-activities").innerHTML = `<div class="card"><h3>M${mno} ${esc(m.name)} — activities (${acts.length})</h3>

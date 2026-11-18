@@ -9,98 +9,10 @@
    "owner": ""
   },
   {
-   "code": "1",
-   "type": "phase",
-   "name": "Planning & Design",
-   "parent": "",
-   "doc_ref": "",
-   "owner": ""
-  },
-  {
-   "code": "2",
-   "type": "phase",
-   "name": "Assembly & Validation",
-   "parent": "",
-   "doc_ref": "",
-   "owner": ""
-  },
-  {
-   "code": "3",
-   "type": "phase",
-   "name": "Shipping & Installation",
-   "parent": "",
-   "doc_ref": "",
-   "owner": ""
-  },
-  {
-   "code": "4",
-   "type": "phase",
-   "name": "Comissioning",
-   "parent": "",
-   "doc_ref": "",
-   "owner": ""
-  },
-  {
-   "code": "5",
-   "type": "phase",
-   "name": "Closure",
-   "parent": "",
-   "doc_ref": "",
-   "owner": ""
-  },
-  {
-   "code": "0.0",
-   "type": "gate",
-   "name": "Project Approval",
-   "parent": "0",
-   "doc_ref": "",
-   "owner": ""
-  },
-  {
-   "code": "1.1",
-   "type": "gate",
-   "name": "Planning Completed",
-   "parent": "1",
-   "doc_ref": "",
-   "owner": ""
-  },
-  {
-   "code": "2.2",
-   "type": "gate",
-   "name": "Manufacturing Completed",
-   "parent": "2",
-   "doc_ref": "",
-   "owner": ""
-  },
-  {
-   "code": "3.3",
-   "type": "gate",
-   "name": "Installation Completed",
-   "parent": "3",
-   "doc_ref": "",
-   "owner": ""
-  },
-  {
-   "code": "4.4",
-   "type": "gate",
-   "name": "Modules Comissioned",
-   "parent": "4",
-   "doc_ref": "",
-   "owner": ""
-  },
-  {
-   "code": "5.5",
-   "type": "gate",
-   "name": "Handover Completion",
-   "parent": "5",
-   "doc_ref": "",
-   "owner": ""
-  },
-  {
    "code": "0.0.1",
    "type": "milestone",
    "name": "Contract Signed",
-   "parent": "0.0",
+   "parent": "0",
    "doc_ref": "",
    "owner": ""
   },
@@ -132,7 +44,7 @@
    "code": "0.0.2",
    "type": "milestone",
    "name": "Sales handover completed",
-   "parent": "0.0",
+   "parent": "0",
    "doc_ref": "",
    "owner": ""
   },
@@ -153,10 +65,26 @@
    "owner": "DPM"
   },
   {
+   "code": "0.0",
+   "type": "gate",
+   "name": "Project Approval",
+   "parent": "0",
+   "doc_ref": "",
+   "owner": ""
+  },
+  {
+   "code": "1",
+   "type": "phase",
+   "name": "Planning & Design",
+   "parent": "",
+   "doc_ref": "",
+   "owner": ""
+  },
+  {
    "code": "1.1.3",
    "type": "milestone",
    "name": "Plan Alingned and Approved",
-   "parent": "1.1",
+   "parent": "1",
    "doc_ref": "",
    "owner": ""
   },
@@ -220,7 +148,7 @@
    "code": "1.1.4",
    "type": "milestone",
    "name": "Application for class approveal done",
-   "parent": "1.1",
+   "parent": "1",
    "doc_ref": "",
    "owner": ""
   },
@@ -388,7 +316,7 @@
    "code": "1.1.5",
    "type": "milestone",
    "name": "Technical Agreement Completed",
-   "parent": "1.1",
+   "parent": "1",
    "doc_ref": "",
    "owner": ""
   },
@@ -553,10 +481,26 @@
    "owner": ""
   },
   {
+   "code": "1.1",
+   "type": "gate",
+   "name": "Planning Completed",
+   "parent": "1",
+   "doc_ref": "",
+   "owner": ""
+  },
+  {
+   "code": "2",
+   "type": "phase",
+   "name": "Assembly & Validation",
+   "parent": "",
+   "doc_ref": "",
+   "owner": ""
+  },
+  {
    "code": "2.2.6",
    "type": "milestone",
    "name": "Sourcing Completed",
-   "parent": "2.2",
+   "parent": "2",
    "doc_ref": "",
    "owner": ""
   },
@@ -708,7 +652,7 @@
    "code": "2.2.7",
    "type": "milestone",
    "name": "Manufactruring Completed",
-   "parent": "2.2",
+   "parent": "2",
    "doc_ref": "",
    "owner": ""
   },
@@ -740,7 +684,7 @@
    "code": "2.2.8",
    "type": "milestone",
    "name": "Start-up & Verification Completed",
-   "parent": "2.2",
+   "parent": "2",
    "doc_ref": "",
    "owner": ""
   },
@@ -764,7 +708,7 @@
    "code": "2.2.9",
    "type": "milestone",
    "name": "FAT Approved",
-   "parent": "2.2",
+   "parent": "2",
    "doc_ref": "",
    "owner": ""
   },
@@ -820,7 +764,7 @@
    "code": "2.2.10",
    "type": "milestone",
    "name": "Disconnected and Packed",
-   "parent": "2.2",
+   "parent": "2",
    "doc_ref": "",
    "owner": ""
   },
@@ -849,10 +793,26 @@
    "owner": "DPM"
   },
   {
+   "code": "2.2",
+   "type": "gate",
+   "name": "Manufacturing Completed",
+   "parent": "2",
+   "doc_ref": "",
+   "owner": ""
+  },
+  {
+   "code": "3",
+   "type": "phase",
+   "name": "Shipping & Installation",
+   "parent": "",
+   "doc_ref": "",
+   "owner": ""
+  },
+  {
    "code": "3.3.11",
    "type": "milestone",
    "name": "Shipped to Location",
-   "parent": "3.3",
+   "parent": "3",
    "doc_ref": "",
    "owner": ""
   },
@@ -868,7 +828,7 @@
    "code": "3.3.12",
    "type": "milestone",
    "name": "Installation Completed",
-   "parent": "3.3",
+   "parent": "3",
    "doc_ref": "",
    "owner": ""
   },
@@ -929,10 +889,26 @@
    "owner": "DPM"
   },
   {
+   "code": "3.3",
+   "type": "gate",
+   "name": "Installation Completed",
+   "parent": "3",
+   "doc_ref": "",
+   "owner": ""
+  },
+  {
+   "code": "4",
+   "type": "phase",
+   "name": "Comissioning",
+   "parent": "",
+   "doc_ref": "",
+   "owner": ""
+  },
+  {
    "code": "4.4.13",
    "type": "milestone",
    "name": "Comissioning Completed",
-   "parent": "4.4",
+   "parent": "4",
    "doc_ref": "",
    "owner": ""
   },
@@ -953,10 +929,26 @@
    "owner": "DPM"
   },
   {
+   "code": "4.4",
+   "type": "gate",
+   "name": "Modules Comissioned",
+   "parent": "4",
+   "doc_ref": "",
+   "owner": ""
+  },
+  {
+   "code": "5",
+   "type": "phase",
+   "name": "Closure",
+   "parent": "",
+   "doc_ref": "",
+   "owner": ""
+  },
+  {
    "code": "5.5.14",
    "type": "milestone",
    "name": "Handover & Closure",
-   "parent": "5.5",
+   "parent": "5",
    "doc_ref": "",
    "owner": ""
   },
@@ -983,6 +975,14 @@
    "parent": "5.5.14",
    "doc_ref": "",
    "owner": "DPM"
+  },
+  {
+   "code": "5.5",
+   "type": "gate",
+   "name": "Handover Completion",
+   "parent": "5",
+   "doc_ref": "",
+   "owner": ""
   }
  ],
  "timeline": [
