@@ -684,7 +684,109 @@ def gather_context(conn, pid=None):
                     due = t["due_date"] or (base + timedelta(weeks=t["week_offset"])).isoformat()
                     ctx["upcoming_milestones"].append(
                         {"project": p["name"], "milestone_no": mno, "due": due})
+        ctx["open_opl"] = rows_to_dicts(conn.execute(
+            "SELECT o.number, o.description, o.assignee, o.due_date, o.priority, o.blocker,"
+            " p.name AS project FROM opl o JOIN projects p ON p.id = o.project_id"
+            " WHERE o.status != 'Closed' ORDER BY o.due_date LIMIT 200").fetchall())
+        ctx["open_milestones"] = rows_to_dicts(conn.execute(
+            "SELECT t.milestone_no, t.name, t.due_date, p.name AS project FROM timeline t"
+            " JOIN projects p ON p.id = t.project_id"
+            " WHERE t.done = 0 AND t.due_date != '' ORDER BY t.due_date LIMIT 200").fetchall())
+    ctx["completed_last_week"] = completed_last_week(conn, pid)
     return ctx
+
+
+_AUDIT_NAME_TABLES = {"wbs": ("wbs", "name"), "opl": ("opl", "description"),
+                      "class_checklist": ("project_class_items", "title"),
+                      "timeline": ("timeline", "name"),
+                      "documents": ("project_documents", None)}
+
+
+def completed_last_week(conn, pid=None):
+    """Items marked Done/Closed/n/a in the last 7 days, from the audit log."""
+    ts = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    q = ("SELECT entity, entity_id, action, detail, changed_by, changed_at, project_id FROM audit"
+         " WHERE changed_at >= ?")
+    args = [ts]
+    if pid:
+        q += " AND (project_id = ? OR project_id IS NULL)"
+        args.append(pid)
+    q += " ORDER BY changed_at DESC LIMIT 300"
+    out = []
+    for r in conn.execute(q, args).fetchall():
+        try:
+            det = json.loads(r["detail"])
+        except (ValueError, TypeError):
+            det = {}
+        if not isinstance(det, dict):
+            continue
+        st = det.get("status")
+        if st not in ("Done", "n/a", "Closed") and det.get("done") not in (True, 1):
+            continue
+        name = ""
+        tbl = _AUDIT_NAME_TABLES.get(r["entity"])
+        if tbl:
+            table, col = tbl
+            try:
+                if table == "timeline":
+                    row = conn.execute(
+                        "SELECT name AS n FROM timeline WHERE project_id = ? AND milestone_no = ?",
+                        (r["project_id"], int(r["entity_id"]))).fetchone()
+                elif col:
+                    row = conn.execute(f"SELECT {col} AS n FROM {table} WHERE id = ?",
+                                       (int(r["entity_id"]),)).fetchone()
+                else:
+                    row = conn.execute(
+                        "SELECT t.doc_name AS n FROM project_documents pd JOIN doc_templates t"
+                        " ON t.id = pd.template_id WHERE pd.id = ?", (int(r["entity_id"]),)).fetchone()
+                if row:
+                    name = row["n"]
+            except (ValueError, TypeError):
+                pass
+        out.append({"entity": r["entity"], "id": r["entity_id"], "name": name,
+                    "by": r["changed_by"], "at": r["changed_at"],
+                    "project": r["project_id"], "status": st or "done"})
+    return out
+
+
+def _focus_section(title, lo, hi, opl_items, ms_items, project_label=None):
+    lines = [f"## {title} ({lo} → {hi})"]
+    found = False
+    for o in opl_items:
+        due = o.get("due_date") or o.get("due") or ""
+        if due and lo <= due <= hi:
+            found = True
+            pj = f"{o['project']} — " if o.get("project") else ""
+            lines.append(f"- OPL #{o['number']} {o['description']} ({pj}owner {o.get('assignee') or '—'}, "
+                         f"due {due}, {o.get('priority', '')}{', BLOCKED' if o.get('blocker') == 'Yes' else ''})")
+    for m in ms_items:
+        due = m.get("due_date") or m.get("due") or ""
+        if due and lo <= due <= hi:
+            found = True
+            pj = f"{m['project']} — " if m.get("project") else ""
+            lines.append(f"- Milestone M{m['milestone_no']} {m.get('name', '')} ({pj}due {due})")
+    if not found:
+        lines.append("- Nothing due in this window.")
+    return lines
+
+
+def _week_sections(ctx, opl_items, ms_items):
+    today = date.fromisoformat(ctx["today"])
+    w1 = (today.isoformat(), (today + timedelta(days=7)).isoformat())
+    w2 = ((today + timedelta(days=7)).isoformat(), (today + timedelta(days=14)).isoformat())
+    lines = ["", "## Completed last week (last 7 days)"]
+    comp = ctx.get("completed_last_week") or []
+    pname = {p["id"]: p["name"] for p in ctx.get("projects", [])}
+    for c in comp[:12]:
+        pj = pname.get(c.get("project"))
+        pj = f"{pj} — " if pj else ""
+        lines.append(f"- {pj}{c['entity']} {c['name'] or ('#' + str(c['id']))} → {c['status']}"
+                     f" (by {c['by']}, {str(c['at'])[:10]})")
+    if not comp:
+        lines.append("- Nothing marked done/closed in the last 7 days.")
+    lines += _focus_section("Focus this week", w1[0], w1[1], opl_items, ms_items)
+    lines += _focus_section("Focus next week", w2[0], w2[1], opl_items, ms_items)
+    return lines
 
 
 def local_summary(ctx):
@@ -698,6 +800,8 @@ def local_summary(ctx):
                      f"{sum(1 for p in ps if p['status'] == 'Closed')} closed")
         lines.append(f"- Open points total: {sum(p['open_points'] for p in ps)}; "
                      f"critical/blocked: {sum(p['crit_blocked'] for p in ps)}")
+        lines += _week_sections(ctx, ctx.get("open_opl", []),
+                                ctx.get("open_milestones", []) + ctx.get("upcoming_milestones", []))
         crit = ctx["critical_blocked_opl"]
         if crit:
             lines.append("\n## Critical / blocked open points")
@@ -725,6 +829,7 @@ def local_summary(ctx):
         lines.append(f"- Status: {p['status']}; delivery manager: {p['delivery_manager'] or '—'}; "
                      f"type: {p['delivery_type'] or '—'}; equipment: {p['equipment'] or '—'}; "
                      f"modules: {p['modules_count']}")
+        lines += _week_sections(ctx, ctx["opl"], ctx["timeline"])
         opl = ctx["opl"]
         open_o = [o for o in opl if o["status"] != "Closed"]
         crit = [o for o in open_o if o["priority"] == "Critical" or o["blocker"] == "Yes"]
@@ -871,7 +976,7 @@ def wbs_edit(pid, wid):
                 vals.append(d[c])
         if sets:
             conn.execute("UPDATE wbs SET " + ",".join(sets) + " WHERE id = ?", vals + [wid])
-            audit(conn, pid, "wbs", wid, "update", f"{row['code']} {row['name']}")
+            audit(conn, pid, "wbs", wid, "update", json.dumps({**d, "code": row["code"], "name": row["name"]}))
     bump_rev(conn)
     conn.commit()
     conn.close()
@@ -933,7 +1038,7 @@ def timeline_update(pid, mno):
         conn.execute("UPDATE timeline SET " + ",".join(sets) +
                      " WHERE project_id = ? AND milestone_no = ?", vals + [pid, mno])
         bump_rev(conn)
-        audit(conn, pid, "timeline", mno, "update", f"milestone {mno}: {d}")
+        audit(conn, pid, "timeline", mno, "update", json.dumps({**d, "milestone": mno}))
         conn.commit()
     conn.close()
     return jsonify({"ok": True})
@@ -996,7 +1101,7 @@ def opl_edit(pid, oid):
                 vals.append(d[c])
         if sets:
             conn.execute("UPDATE opl SET " + ",".join(sets) + " WHERE id = ?", vals + [oid])
-            audit(conn, pid, "opl", oid, "update", f"#{row['number']}: {d}")
+            audit(conn, pid, "opl", oid, "update", json.dumps({**d, "number": row["number"]}))
     bump_rev(conn)
     conn.commit()
     conn.close()
@@ -1184,7 +1289,7 @@ def project_document_update(pid, did):
     if sets:
         conn.execute("UPDATE project_documents SET " + ",".join(sets) + " WHERE id = ?", vals + [did])
         bump_rev(conn)
-        audit(conn, pid, "documents", did, "update", f"{d}")
+        audit(conn, pid, "documents", did, "update", json.dumps(d))
         conn.commit()
     conn.close()
     return jsonify({"ok": True})
@@ -1221,7 +1326,7 @@ def class_update(pid, cid):
         conn.execute("UPDATE project_class_items SET " + ",".join(sets) + " WHERE id = ?",
                      vals + [cid])
         bump_rev(conn)
-        audit(conn, pid, "class_checklist", cid, "update", f"stage {row['stage']}: {d}")
+        audit(conn, pid, "class_checklist", cid, "update", json.dumps({**d, "stage": row["stage"]}))
         conn.commit()
     conn.close()
     return jsonify({"ok": True})

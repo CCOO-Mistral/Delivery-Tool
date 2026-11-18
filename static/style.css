@@ -180,3 +180,11 @@ tr.doc-phase-row:hover td { background: #13315c; }
 .ai-body ul { padding-left: 20px; margin: 4px 0; }
 .ai-body p { margin: 4px 0; }
 .ai-body li { margin-bottom: 3px; }
+.ptl { position: relative; background: #fff; }
+.ptl-head { position: relative; height: 20px; margin-left: 260px; border-bottom: 2px solid var(--line); }
+.ptl-tick { position: absolute; top: 2px; font-size: 10px; color: var(--muted); border-left: 1px solid #eef2f6; padding-left: 3px; white-space: nowrap; }
+.ptl-today { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger); z-index: 3; pointer-events: none; }
+.ptl-today span, .gantt-today span { position: absolute; top: 0; left: 4px; background: var(--danger); color: #fff; font-size: 10px; padding: 1px 5px; border-radius: 3px; white-space: nowrap; }
+.ptl-crosshair, .gantt-crosshair { position: absolute; top: 0; bottom: 0; width: 1px; background: #0b2545; z-index: 4; pointer-events: none; }
+.ptl-crosshair span, .gantt-crosshair span { position: absolute; top: 0; left: 3px; background: #0b2545; color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+.gantt-today { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger); z-index: 3; pointer-events: none; }

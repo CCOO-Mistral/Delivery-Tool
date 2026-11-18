@@ -54,6 +54,11 @@ async function aiSummary(projectId) {
   }
 }
 
+function isoDate(d) {
+  const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
+
 function flash(msg) {
   const d = document.createElement("div");
   d.className = "flash";
@@ -280,16 +285,31 @@ function renderPortfolioTimeline(events) {
     el.innerHTML = '<p class="muted small">No projects with a contract date yet.</p>';
     return;
   }
+  const iso = d => {
+    const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${dd}`;
+  };
   const dates = events.map(e => e.date).sort();
-  const min = new Date(dates[0]), max = new Date(dates[dates.length - 1]);
+  const min = new Date(dates[0] + "T00:00:00");
+  const max = new Date(dates[dates.length - 1] + "T00:00:00");
+  const today = new Date(); today.setHours(0, 0, 0, 0);
   const spanDays = Math.max((max - min) / 864e5, 7);
-  const px = d => ((new Date(d) - min) / 864e5 / spanDays) * 100;
+  const px = d => ((new Date(d + "T00:00:00") - min) / 864e5 / spanDays) * 100;
+  const ticks = [];
+  for (let d = new Date(min); d <= max; d.setDate(d.getDate() + 7)) {
+    ticks.push(`<div class="ptl-tick" style="left:${px(iso(d))}%">${iso(d)}</div>`);
+  }
+  let todayLine = "";
+  if (today >= min && today <= max) {
+    todayLine = `<div class="ptl-today" style="left:${px(iso(today))}%"><span>today ${iso(today)}</span></div>`;
+  }
   const byProject = {};
   events.forEach(e => {
     (byProject[e.project_id] = byProject[e.project_id] || { name: e.project, pid: e.project_id, ev: [] }).ev.push(e);
   });
-  el.innerHTML = `<div class="gantt-wrap"><div class="gantt" style="min-width:100%">` +
-    Object.values(byProject).map(p => `
+  el.innerHTML = `<div class="gantt-wrap"><div class="ptl" style="min-width:100%">
+      <div class="ptl-head">${ticks.join("")}</div>
+      ${Object.values(byProject).map(p => `
       <div class="gantt-row" style="height:34px">
         <div class="gantt-label" title="${esc(p.name)}"><a href="#/project/${p.pid}/dashboard">${esc(p.name)}</a></div>
         <div class="gantt-track">
@@ -297,10 +317,28 @@ function renderPortfolioTimeline(events) {
               style="left:calc(${px(e.date)}% - 9px)"
               title="${esc(p.name)} ${e.kind} — ${esc(e.date)}"></div>`).join("")}
         </div>
-      </div>`).join("") + `</div></div>
+      </div>`).join("")}
+      ${todayLine}
+      <div class="ptl-crosshair hidden" id="ptl-x"><span id="ptl-x-label"></span></div>
+    </div></div>
     <div class="legend"><span><span class="swatch" style="background:#f4a261;transform:rotate(45deg)"></span>FAT (M9)</span>
     <span><span class="swatch" style="background:#2ec4b6;transform:rotate(45deg)"></span>Commissioning (M13)</span>
-    <span class="small muted">${esc(dates[0])} → ${esc(dates[dates.length - 1])}</span></div>`;
+    <span><span class="swatch" style="background:var(--danger);width:2px;height:12px;transform:none"></span>today</span>
+    <span class="small muted">hover the timeline for a crosshair with the date (yyyy-mm-dd)</span></div>`;
+  const ptl = el.querySelector(".ptl");
+  const x = el.querySelector("#ptl-x");
+  const xl = el.querySelector("#ptl-x-label");
+  ptl.addEventListener("mousemove", e => {
+    const r = ptl.getBoundingClientRect();
+    const trackW = r.width - 260;
+    const frac = Math.min(Math.max((e.clientX - r.left - 260) / trackW, 0), 1);
+    const d = new Date(min);
+    d.setDate(d.getDate() + Math.round(frac * spanDays));
+    x.style.left = (260 + frac * trackW) + "px";
+    x.classList.remove("hidden");
+    xl.textContent = iso(d);
+  });
+  ptl.addEventListener("mouseleave", () => x.classList.add("hidden"));
 }
 
 const MASTER_FIELDS = [
@@ -536,9 +574,18 @@ async function renderTimeline(pid, c) {
   const pw = ganttZoom;
   const msColor = m =>
     WBS_STATUS_COLORS[wbsStatus[mnoToCode[String(m.milestone_no)]] || ""] || "var(--navy-2)";
+  const baseD = data.contract_date ? new Date(data.contract_date + "T00:00:00") : null;
   const headTicks = [];
   for (let w = 0; w <= maxWeek; w++) {
-    if (pw >= 14 || w % 4 === 0) headTicks.push(`<div class="gantt-tick" style="width:${pw}px">W${w}</div>`);
+    if (pw >= 14 || w % 4 === 0) {
+      let lbl = `W${w}`;
+      if (baseD && pw >= 20) {
+        const d = new Date(baseD);
+        d.setDate(d.getDate() + 7 * w);
+        lbl = isoDate(d);
+      }
+      headTicks.push(`<div class="gantt-tick" style="width:${pw}px">${lbl}</div>`);
+    }
   }
   const subColors = ["#2ec4b6", "#f4a261", "#b388eb", "#ff8fab"];
   const rows = data.milestones.map((m, i) => {
@@ -584,6 +631,35 @@ async function renderTimeline(pid, c) {
       <span><span class="swatch" style="background:var(--warn)"></span>in progress</span>
       <span><span class="swatch" style="background:var(--danger);transform:rotate(45deg)"></span>critical/blocked OPL at due date (clickable)</span>
       <span><span class="swatch" style="background:#2ec4b6;transform:rotate(45deg);width:9px;height:9px"></span>sub-milestone of another module</span></div>`;
+  const gantt = c.querySelector(".gantt");
+  if (gantt && baseD) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const wkToday = (today - baseD) / (7 * 864e5);
+    if (wkToday >= 0 && wkToday <= maxWeek) {
+      gantt.insertAdjacentHTML("beforeend",
+        `<div class="gantt-today" style="left:${260 + wkToday * pw}px"><span>today ${isoDate(today)}</span></div>`);
+    }
+    gantt.addEventListener("mousemove", e => {
+      const r = gantt.getBoundingClientRect();
+      const week = (e.clientX - r.left - 260) / pw;
+      if (week < 0 || week > maxWeek) return;
+      const d = new Date(baseD);
+      d.setDate(d.getDate() + Math.round(week) * 7);
+      let xh = gantt.querySelector(".gantt-crosshair");
+      if (!xh) {
+        xh = document.createElement("div");
+        xh.className = "gantt-crosshair";
+        xh.innerHTML = "<span></span>";
+        gantt.appendChild(xh);
+      }
+      xh.style.left = (260 + week * pw) + "px";
+      xh.querySelector("span").textContent = isoDate(d);
+    });
+    gantt.addEventListener("mouseleave", () => {
+      const xh = gantt.querySelector(".gantt-crosshair");
+      if (xh) xh.remove();
+    });
+  }
   c.querySelector("#module-sel").onchange = e => { state.moduleIdx = Number(e.target.value); render(); };
   c.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => { ganttZoom = Number(b.dataset.zoom); render(); });
   const showActivities = mno => {
