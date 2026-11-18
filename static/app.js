@@ -301,11 +301,10 @@ function renderPortfolioTimeline(events) {
   };
   const dates = events.map(e => e.date).sort();
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  // always include today in the range, then pad 4 weeks on each side
-  const min = new Date(Math.min(new Date(dates[0] + "T00:00:00"), today));
-  const max = new Date(Math.max(new Date(dates[dates.length - 1] + "T00:00:00"), today));
-  min.setDate(min.getDate() - 28);
-  max.setDate(max.getDate() + 28);
+  const min = new Date(new Date(dates[0] + "T00:00:00").getTime() - 28 * 864e5);
+  const max = new Date(new Date(dates[dates.length - 1] + "T00:00:00").getTime() + 28 * 864e5);
+  if (today < min) min.setTime(today.getTime());
+  if (today > max) max.setTime(today.getTime());
   const spanDays = Math.max((max - min) / 864e5, 7);
   const px = d => ((new Date(d + "T00:00:00") - min) / 864e5 / spanDays) * 100;
   const ticks = [];
@@ -587,6 +586,7 @@ async function renderTimeline(pid, c) {
   const endW = lastW + 4;
   const pw = ganttZoom;
   const X = w => 260 + (w - startW) * pw;
+  const TX = w => (w - startW) * pw;
 
   // week ribbon: ISO week label per week (thinned at low zoom), divider every week, strong at year change
   const ticks = [];
@@ -608,12 +608,12 @@ async function renderTimeline(pid, c) {
     const wk = m.week_offset + shiftOf(m.milestone_no);
     const due = m.due_date || m.computed_due_date;
     const color = msColor(m);
-    const bar = `<div class="gantt-bar" style="left:${X(prev)}px;width:${Math.max((wk - prev), 1) * pw}px;background:${color}" title="${esc(m.name)} — ${esc(due)}"></div>`;
-    const dia = `<div class="gantt-diamond" style="left:${X(wk) - 9}px;background:${color}" title="M${m.milestone_no} ${esc(m.name)} — due ${esc(due)} (click for activities)" data-mno="${m.milestone_no}"></div>`;
+    const bar = `<div class="gantt-bar" style="left:${TX(prev)}px;width:${Math.max((wk - prev), 1) * pw}px;background:${color}" title="${esc(m.name)} — ${esc(due)}"></div>`;
+    const dia = `<div class="gantt-diamond" style="left:${TX(wk) - 9}px;background:${color}" title="M${m.milestone_no} ${esc(m.name)} — due ${esc(due)} (click for activities)" data-mno="${m.milestone_no}"></div>`;
     const subs = [];
     for (let mi = 1; mi < modules; mi++) {
       if (m.milestone_no > 6) {
-        subs.push(`<div class="gantt-subdiamond" style="left:${X(m.week_offset + 4 * mi) - 5}px;background:${subColors[(mi - 1) % subColors.length]}" title="Module ${mi + 1} M${m.milestone_no}"></div>`);
+        subs.push(`<div class="gantt-subdiamond" style="left:${TX(m.week_offset + 4 * mi) - 5}px;background:${subColors[(mi - 1) % subColors.length]}" title="Module ${mi + 1} M${m.milestone_no}"></div>`);
       }
     }
     return `<div class="gantt-row"><div class="gantt-label" title="${esc(m.name)}">M${m.milestone_no} ${esc(m.name)} <span class="muted small">${esc(due)}${m.done ? " ✓" : ""}</span></div>
@@ -623,7 +623,7 @@ async function renderTimeline(pid, c) {
     <div class="gantt-track">${data.critical_opl.map(o => {
       const d = new Date(o.due_date);
       const wk = baseD && d >= baseD ? Math.round((d - baseD) / (7 * 864e5)) : 0;
-      return `<div class="gantt-diamond critical" style="left:${X(wk) - 11}px" title="#${o.number} ${esc(o.description)} — due ${esc(o.due_date)} (click to open)" data-opl="${o.id}"></div>`;
+      return `<div class="gantt-diamond critical" style="left:${TX(wk) - 11}px" title="#${o.number} ${esc(o.description)} — due ${esc(o.due_date)} (click to open)" data-opl="${o.id}"></div>`;
     }).join("")}</div></div>`;
   c.innerHTML = `<div class="toolbar">
       <label class="small muted">Module:
