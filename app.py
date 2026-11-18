@@ -379,7 +379,7 @@ def backup_db():
 PROJECT_FIELDS = ["name", "status", "delivery_manager", "customer", "end_customer",
                   "delivery_type", "equipment", "modules_count", "module_type", "regulatory",
                   "grid_codes", "contract_date", "first_delivery_date", "last_delivery_date",
-                  "shipyard", "shipyard_country"]
+                  "shipyard", "shipyard_country", "payment_terms"]
 
 
 def _opl_critical_blocked_at(conn, ts):

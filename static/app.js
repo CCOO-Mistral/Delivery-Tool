@@ -392,6 +392,7 @@ const MASTER_FIELDS = [
   { key: "contract_date", label: "Contract date", type: "date" },
   { key: "first_delivery_date", label: "First delivery date", type: "date" },
   { key: "last_delivery_date", label: "Last delivery date", type: "date" },
+  { key: "payment_terms", label: "Payment terms (where is delivery, who pays)" },
 ];
 
 function newProjectModal() {

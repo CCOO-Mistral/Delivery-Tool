@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS projects (
     last_delivery_date TEXT DEFAULT '',
     shipyard TEXT DEFAULT '',
     shipyard_country TEXT DEFAULT '',
+    payment_terms TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now')),
     created_by TEXT DEFAULT ''
 );
@@ -435,6 +436,7 @@ def migrate(conn):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
     add_col("projects", "shipyard", "TEXT DEFAULT ''")
     add_col("projects", "shipyard_country", "TEXT DEFAULT ''")
+    add_col("projects", "payment_terms", "TEXT DEFAULT ''")
     add_col("opl", "blocker_description", "TEXT DEFAULT ''")
     add_col("payment_milestones", "paid", "INTEGER DEFAULT 0")
     add_col("cash_out", "pct_of_sales", "REAL")
