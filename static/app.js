@@ -315,7 +315,7 @@ function renderPortfolioTimeline(events) {
   const px = d => ((new Date(d + "T00:00:00") - min) / 864e5 / spanDays) * 100;
   const labelEvery = spanDays > 420 ? 8 : spanDays > 240 ? 4 : spanDays > 120 ? 2 : 1;
   const weekDates = [];
-  for (let d = new Date(min); d <= max; d.setDate(d.getDate() + 7)) weekDates.push(new Date(d));
+  for (let d = new Date(min); px(iso(d)) <= 100; d.setDate(d.getDate() + 7)) weekDates.push(new Date(d));
   const weekTicks = [];
   const vlines = [];
   weekDates.forEach((d, wi) => {
@@ -341,6 +341,7 @@ function renderPortfolioTimeline(events) {
     (byProject[e.project_id] = byProject[e.project_id] || { name: e.project, pid: e.project_id, ev: [] }).ev.push(e);
   });
   el.innerHTML = `<div class="gantt-wrap"><div class="ptl" style="min-width:100%">
+      <div class="ptl-grid" style="background-image:repeating-linear-gradient(to right,#eef2f6 0 1px,transparent 1px ${(700 / spanDays).toFixed(4)}%)"></div>
       <div class="ptl-head"><div class="ptl-head-row">${monthTicks.join("")}</div><div class="ptl-head-row">${weekTicks.join("")}</div></div>
       ${vlines.join("")}
       ${Object.values(byProject).map(p => `
@@ -582,7 +583,6 @@ async function renderWbs(pid, c) {
 }
 
 let ganttZoom = 10;
-window.addEventListener("resize", () => { if (window.__ganttFill) window.__ganttFill(); });
 
 const WBS_STATUS_COLORS = {
   "Done": "var(--ok)", "n/a": "var(--ok)", "In progress": "var(--warn)",
@@ -616,10 +616,10 @@ async function renderTimeline(pid, c) {
 
   // week ribbon: ISO week label per week (thinned at low zoom), divider every week, strong at year change
   const labelEvery = pw >= 18 ? 1 : pw >= 10 ? 2 : 4;
-  const tickHTML = w => {
+  const tickHTML = (w, grow) => {
     const d = baseD ? new Date(baseD.getTime() + 7 * w * 864e5) : null;
     const lbl = d ? `W${isoWeek(d)}` : `W${w - startW}`;
-    return `<div class="gantt-tick" style="width:${pw}px">${(w - startW) % labelEvery === 0 ? lbl : ""}</div>`;
+    return `<div class="gantt-tick" style="width:${pw}px${grow ? ";flex:1 0 auto" : ""}">${(w - startW) % labelEvery === 0 ? lbl : ""}</div>`;
   };
   const vlineHTML = w => {
     const d = baseD ? new Date(baseD.getTime() + 7 * w * 864e5) : null;
@@ -638,10 +638,11 @@ async function renderTimeline(pid, c) {
     }
     const monthCells = starts.map((s, i) => {
       const span = (i + 1 < starts.length ? starts[i + 1].w : toW + 1) - s.w;
-      return `<div class="gantt-tick month" style="width:${span * pw}px">${MONTHS[s.month.getMonth()]}</div>`;
+      const grow = i === starts.length - 1 ? ";flex:1 0 auto" : "";
+      return `<div class="gantt-tick month" style="width:${span * pw}px${grow}">${MONTHS[s.month.getMonth()]}</div>`;
     }).join("");
     const weekTicks = [];
-    for (let w = startW; w <= toW; w++) weekTicks.push(tickHTML(w));
+    for (let w = startW; w <= toW; w++) weekTicks.push(tickHTML(w, w === toW));
     return { monthCells, weekTicks: weekTicks.join("") };
   };
   const vlines = [];
@@ -683,7 +684,8 @@ async function renderTimeline(pid, c) {
       <button class="btn small" data-zoom="20">+</button>
       <span class="muted small">ISO calendar weeks (W##) on the axis, divider every week, strong line at year change, 4-week buffer each side. Hover for a crosshair with the exact date (yyyy-mm-dd). Colors follow WBS status. Click a milestone for its activities. Contract date: ${esc(data.contract_date || "—")}.</span>
     </div>
-    <div class="gantt-wrap"><div class="gantt" style="min-width:${260 + (endW - startW + 1) * pw}px">
+    <div class="gantt-wrap"><div class="gantt" style="min-width:${260 + (endW - startW + 1) * pw}px;--pw:${pw}px">
+      <div class="gantt-grid"></div>
       <div class="gantt-head"><div class="gantt-label"><div>Month</div><div>Week</div></div><div class="gantt-head-cols"><div class="gantt-head-row" id="gantt-months">${head0.monthCells}</div><div class="gantt-head-row" id="gantt-weeks">${head0.weekTicks}</div></div></div>
       ${vlines.join("")}
       ${rows.join("")}${critLane}
@@ -717,6 +719,12 @@ async function renderTimeline(pid, c) {
   };
   window.__ganttFill = fillGrid;
   fillGrid();
+  requestAnimationFrame(fillGrid);
+  setTimeout(fillGrid, 250);
+  if (window.ResizeObserver && gantt && gantt.parentElement) {
+    const ro = new ResizeObserver(() => { if (!gantt.isConnected) { ro.disconnect(); return; } fillGrid(); });
+    ro.observe(gantt.parentElement);
+  }
   if (gantt && baseD) {
     const today = new Date(); today.setHours(0, 0, 0, 0);
     const wkToday = (today - baseD) / (7 * 864e5);

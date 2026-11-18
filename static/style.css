@@ -200,6 +200,8 @@ tr.doc-phase-row:hover td { background: #13315c; }
 .ptl-crosshair span, .gantt-crosshair span { position: absolute; top: 0; left: 3px; background: #0b2545; color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
 .gantt-today { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--danger); z-index: 3; pointer-events: none; }
 
+.gantt-grid { position: absolute; left: 260px; right: 0; top: 0; bottom: 0; pointer-events: none; z-index: 0; background-image: repeating-linear-gradient(to right, #eef2f6 0, #eef2f6 1px, transparent 1px, transparent var(--pw, 10px)); }
+.ptl-grid { position: absolute; left: 260px; right: 0; top: 0; bottom: 0; pointer-events: none; z-index: 0; }
 .gantt-vline { position: absolute; top: 0; bottom: 0; pointer-events: none; z-index: 0; }
 .gantt-vline.week { border-left: 1px solid #eef2f6; }
 .gantt-vline.month { border-left: 2px solid #d5dde8; }
