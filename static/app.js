@@ -380,7 +380,7 @@ async function renderWbs(pid, c) {
     <div class="card"><table id="wbs-table">
       <thead><tr><th>Code</th><th>Type</th><th>Status</th><th>Name</th><th>Owner</th>
         <th>Planned</th><th>Actual</th><th>Reference</th><th></th></tr></thead>
-      <tbody>${filtered.map(w => `<tr class="${w.item_type}-row" data-code="${esc(w.code)}" data-parent="${esc(w.parent_code)}" data-id="${w.id}">
+      <tbody>${filtered.map(w => `<tr class="${w.item_type}-row${w.status === "Done" || w.status === "n/a" ? " done-row" : ""}" data-code="${esc(w.code)}" data-parent="${esc(w.parent_code)}" data-id="${w.id}">
         <td class="wbs-code">${w.item_type === "phase" || w.item_type === "gate" || w.item_type === "milestone" ? '<span class="collapse-toggle">▾</span> ' : ""}${esc(w.code)}</td>
         <td>${esc(w.item_type)}</td>
         <td class="cell-status">${statusBadge(w.status)}</td>
@@ -750,7 +750,7 @@ async function renderDocuments(pid, c) {
   const flags = d => ["rina", "abs", "customer", "internal", "hard_copies"].filter(k => d[k] === "x" || d[k] === "R" || d[k] === "D").join(", ");
   const table = rows => `<table><thead><tr><th>Phase</th><th>Document</th><th>Status</th><th>Link</th>
       <th>Comment</th><th>Owner</th><th>Reviewer</th><th>Approver</th><th>Flags</th><th>Code</th><th></th></tr></thead>
-      <tbody>${rows.map(d => `<tr>
+      <tbody>${rows.map(d => `<tr${d.status === "Done" || d.status === "n/a" ? ' class="done-row"' : ""}>
         <td class="small muted">${esc(d.phase)}</td>
         <td>${esc(d.doc_name)}<br><span class="small muted">${esc(d.description)}</span></td>
         <td>${statusBadge(d.status)}</td>
