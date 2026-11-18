@@ -608,7 +608,11 @@ async function renderTimeline(pid, c) {
   const baseD = data.contract_date ? new Date(data.contract_date + "T00:00:00") : null;
   // ISO calendar week is the smallest component; 4-week buffer on each side of the project
   const startW = -4;
-  const lastW = Math.max(82, ...data.milestones.map(m => m.week_offset + shiftOf(m.milestone_no)));
+  const lastModuleShift = mno => (mno > 6 ? 4 * (modules - 1) : 0);
+  const oplWeeks = (data.critical_opl || [])
+    .map(o => baseD && o.due_date ? Math.round((new Date(o.due_date + "T00:00:00") - baseD) / (7 * 864e5)) : -1)
+    .filter(w => w >= 0);
+  const lastW = Math.max(82, ...data.milestones.map(m => m.week_offset + lastModuleShift(m.milestone_no)), ...oplWeeks);
   const endW = lastW + 4;
   const pw = ganttZoom;
   const X = w => 260 + (w - startW) * pw;
