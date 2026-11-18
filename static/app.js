@@ -314,23 +314,34 @@ function renderPortfolioTimeline(events) {
   const spanDays = Math.max((max - min) / 864e5, 7);
   const px = d => ((new Date(d + "T00:00:00") - min) / 864e5 / spanDays) * 100;
   const labelEvery = spanDays > 420 ? 8 : spanDays > 240 ? 4 : spanDays > 120 ? 2 : 1;
-  const ticks = [];
+  const weekDates = [];
+  for (let d = new Date(min); d <= max; d.setDate(d.getDate() + 7)) weekDates.push(new Date(d));
+  const weekTicks = [];
   const vlines = [];
-  let wi = 0;
-  for (let d = new Date(min); d <= max; d.setDate(d.getDate() + 7), wi++) {
+  weekDates.forEach((d, wi) => {
     const wno = isoWeek(d);
     const ms = monthStartInWeek(d);
-    const lbl = ms ? MONTHS[ms.getMonth()] : (wi % labelEvery === 0 ? (wno === 1 ? `W01 '${String(d.getFullYear()).slice(2)}` : `W${wno}`) : "");
-    ticks.push(`<div class="ptl-tick ${ms ? "month" : ""}" style="left:${px(iso(d))}%">${lbl}</div>`);
+    const lbl = wi % labelEvery === 0 ? (wno === 1 ? `W01 '${String(d.getFullYear()).slice(2)}` : `W${wno}`) : "";
+    weekTicks.push(`<div class="ptl-tick" style="left:${px(iso(d))}%">${lbl}</div>`);
     vlines.push(`<div class="ptl-vline ${wno === 1 ? "year" : ms ? "month" : "week"}" style="left:calc(260px + (100% - 260px) * ${px(iso(d)) / 100})"></div>`);
-  }
+  });
+  const spans = [];
+  weekDates.forEach((d, i) => {
+    const ms = monthStartInWeek(d);
+    if (i === 0 || ms) spans.push({ i, label: MONTHS[(ms || d).getMonth()] });
+  });
+  const monthTicks = spans.map((s, k) => {
+    const from = weekDates[s.i];
+    const to = k + 1 < spans.length ? weekDates[spans[k + 1].i] : new Date(max.getTime() + 7 * 864e5);
+    return `<div class="ptl-tick month" style="left:${px(iso(from))}%;width:${px(iso(to)) - px(iso(from))}%">${s.label}</div>`;
+  });
   const todayLine = `<div class="ptl-today" style="left:calc(260px + (100% - 260px) * ${px(iso(today)) / 100})"><span>today ${iso(today)}</span></div>`;
   const byProject = {};
   events.forEach(e => {
     (byProject[e.project_id] = byProject[e.project_id] || { name: e.project, pid: e.project_id, ev: [] }).ev.push(e);
   });
   el.innerHTML = `<div class="gantt-wrap"><div class="ptl" style="min-width:100%">
-      <div class="ptl-head">${ticks.join("")}</div>
+      <div class="ptl-head"><div class="ptl-head-row">${monthTicks.join("")}</div><div class="ptl-head-row">${weekTicks.join("")}</div></div>
       ${vlines.join("")}
       ${Object.values(byProject).map(p => `
       <div class="gantt-row" style="height:34px">
@@ -607,8 +618,6 @@ async function renderTimeline(pid, c) {
   const labelEvery = pw >= 18 ? 1 : pw >= 10 ? 2 : 4;
   const tickHTML = w => {
     const d = baseD ? new Date(baseD.getTime() + 7 * w * 864e5) : null;
-    const ms = d ? monthStartInWeek(d) : null;
-    if (ms) return `<div class="gantt-tick month" style="width:${pw}px">${MONTHS[ms.getMonth()]}</div>`;
     const lbl = d ? `W${isoWeek(d)}` : `W${w - startW}`;
     return `<div class="gantt-tick" style="width:${pw}px">${(w - startW) % labelEvery === 0 ? lbl : ""}</div>`;
   };
@@ -619,9 +628,25 @@ async function renderTimeline(pid, c) {
     const cls = isYear ? "year" : ms ? "month" : "week";
     return `<div class="gantt-vline ${cls}" style="left:${X(w)}px"></div>`;
   };
-  const ticks = [];
+  const buildHead = toW => {
+    const starts = [];
+    for (let w = startW; w <= toW; w++) {
+      const d = baseD ? new Date(baseD.getTime() + 7 * w * 864e5) : null;
+      const ms = d ? monthStartInWeek(d) : null;
+      if (w === startW) starts.push({ w, month: ms || (d ? new Date(d.getFullYear(), d.getMonth(), 1) : new Date(2000, 0, 1)) });
+      else if (ms) starts.push({ w, month: ms });
+    }
+    const monthCells = starts.map((s, i) => {
+      const span = (i + 1 < starts.length ? starts[i + 1].w : toW + 1) - s.w;
+      return `<div class="gantt-tick month" style="width:${span * pw}px">${MONTHS[s.month.getMonth()]}</div>`;
+    }).join("");
+    const weekTicks = [];
+    for (let w = startW; w <= toW; w++) weekTicks.push(tickHTML(w));
+    return { monthCells, weekTicks: weekTicks.join("") };
+  };
   const vlines = [];
-  for (let w = startW; w <= endW; w++) { vlines.push(vlineHTML(w)); ticks.push(tickHTML(w)); }
+  for (let w = startW; w <= endW; w++) vlines.push(vlineHTML(w));
+  const head0 = buildHead(endW);
 
   const msColor = m =>
     WBS_STATUS_COLORS[wbsStatus[mnoToCode[String(m.milestone_no)]] || ""] || "var(--navy-2)";
@@ -659,7 +684,7 @@ async function renderTimeline(pid, c) {
       <span class="muted small">ISO calendar weeks (W##) on the axis, divider every week, strong line at year change, 4-week buffer each side. Hover for a crosshair with the exact date (yyyy-mm-dd). Colors follow WBS status. Click a milestone for its activities. Contract date: ${esc(data.contract_date || "—")}.</span>
     </div>
     <div class="gantt-wrap"><div class="gantt" style="min-width:${260 + (endW - startW + 1) * pw}px">
-      <div class="gantt-head"><div class="gantt-label">Milestone</div><div style="display:flex;flex:1;overflow:hidden">${ticks.join("")}</div></div>
+      <div class="gantt-head"><div class="gantt-label"><div>Month</div><div>Week</div></div><div class="gantt-head-cols"><div class="gantt-head-row" id="gantt-months">${head0.monthCells}</div><div class="gantt-head-row" id="gantt-weeks">${head0.weekTicks}</div></div></div>
       ${vlines.join("")}
       ${rows.join("")}${critLane}
     </div></div>
@@ -676,13 +701,18 @@ async function renderTimeline(pid, c) {
   let filledTo = endW;
   const fillGrid = () => {
     if (!gantt || !gantt.isConnected) return;
-    const headTicks = gantt.querySelector(".gantt-head > div:last-child");
     const firstRow = gantt.querySelector(".gantt-row");
     const need = gantt.clientWidth - 260;
     for (let w = filledTo + 1; (w - startW) * pw < need; w++) {
       if (firstRow) firstRow.insertAdjacentHTML("beforebegin", vlineHTML(w));
-      if (headTicks) headTicks.insertAdjacentHTML("beforeend", tickHTML(w));
       filledTo = w;
+    }
+    const monthsRow = gantt.querySelector("#gantt-months");
+    const weeksRow = gantt.querySelector("#gantt-weeks");
+    if (monthsRow && weeksRow) {
+      const h = buildHead(filledTo);
+      monthsRow.innerHTML = h.monthCells;
+      weeksRow.innerHTML = h.weekTicks;
     }
   };
   window.__ganttFill = fillGrid;

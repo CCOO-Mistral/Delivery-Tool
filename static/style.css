@@ -142,9 +142,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(46,196,182,.
 .gantt-diamond.done { background: var(--ok); }
 .gantt-diamond.critical { background: var(--danger); width: 22px; height: 22px; top: 3px; z-index: 2; }
 .gantt-head { display: flex; border-bottom: 2px solid var(--line); position: sticky; top: 0; background: #fff; }
-.gantt-head .gantt-label { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+.gantt-head .gantt-label { font-size: 11px; color: var(--muted); text-transform: uppercase; display: flex; flex-direction: column; justify-content: center; }
+.gantt-head-cols { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.gantt-head-row { display: flex; height: 22px; overflow: hidden; }
+.gantt-head-row + .gantt-head-row { border-top: 1px solid #eef2f6; }
 .gantt-tick { flex: 0 0 auto; font-size: 10px; color: var(--muted); border-left: 1px solid #eef2f6; height: 22px; padding: 2px 3px; }
-.gantt-tick.month { font-weight: 700; color: var(--navy); }
+.gantt-tick.month { font-weight: 700; color: var(--navy); border-left: 2px solid #d5dde8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
@@ -182,9 +185,11 @@ tr.doc-phase-row:hover td { background: #13315c; }
 .ai-body p { margin: 4px 0; }
 .ai-body li { margin-bottom: 3px; }
 .ptl { position: relative; background: #fff; }
-.ptl-head { position: relative; height: 20px; margin-left: 260px; border-bottom: 2px solid var(--line); }
+.ptl-head { position: relative; height: 40px; margin-left: 260px; border-bottom: 2px solid var(--line); }
+.ptl-head-row { position: relative; height: 20px; overflow: hidden; }
+.ptl-head-row + .ptl-head-row { border-top: 1px solid #eef2f6; }
 .ptl-tick { position: absolute; top: 0; height: 20px; line-height: 20px; font-size: 12px; font-weight: 400; color: var(--navy-2); border-left: 1px solid #eef2f6; padding-left: 4px; white-space: nowrap; }
-.ptl-tick.month { font-weight: 700; color: var(--navy); }
+.ptl-tick.month { font-weight: 700; color: var(--navy); border-left: 2px solid #d5dde8; overflow: hidden; }
 .ptl-vline { position: absolute; top: 0; bottom: 0; pointer-events: none; z-index: 0; }
 .ptl-vline.week { border-left: 1px solid #eef2f6; }
 .ptl-vline.month { border-left: 2px solid #d5dde8; }
