@@ -59,6 +59,16 @@ function isoDate(d) {
   return `${y}-${m}-${dd}`;
 }
 
+function isoWeek(d) {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = (t.getUTCDay() + 6) % 7;
+  t.setUTCDate(t.getUTCDate() - day + 3);
+  const first = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
+  const fday = (first.getUTCDay() + 6) % 7;
+  first.setUTCDate(first.getUTCDate() - fday + 3);
+  return 1 + Math.round((t - first) / 6048e5);
+}
+
 function flash(msg) {
   const d = document.createElement("div");
   d.className = "flash";
@@ -297,7 +307,7 @@ function renderPortfolioTimeline(events) {
   const px = d => ((new Date(d + "T00:00:00") - min) / 864e5 / spanDays) * 100;
   const ticks = [];
   for (let d = new Date(min); d <= max; d.setDate(d.getDate() + 7)) {
-    ticks.push(`<div class="ptl-tick" style="left:${px(iso(d))}%">${iso(d)}</div>`);
+    ticks.push(`<div class="ptl-tick" style="left:${px(iso(d))}%">W${isoWeek(d)}</div>`);
   }
   let todayLine = "";
   if (today >= min && today <= max) {
@@ -576,14 +586,20 @@ async function renderTimeline(pid, c) {
     WBS_STATUS_COLORS[wbsStatus[mnoToCode[String(m.milestone_no)]] || ""] || "var(--navy-2)";
   const baseD = data.contract_date ? new Date(data.contract_date + "T00:00:00") : null;
   const headTicks = [];
+  const vlines = [];
+  let prevMY = null;
   for (let w = 0; w <= maxWeek; w++) {
-    if (pw >= 14 || w % 4 === 0) {
-      let lbl = `W${w}`;
-      if (baseD && pw >= 20) {
-        const d = new Date(baseD);
-        d.setDate(d.getDate() + 7 * w);
-        lbl = isoDate(d);
+    const d = baseD ? new Date(baseD.getTime() + 7 * w * 864e5) : null;
+    if (d) {
+      const my = `${d.getFullYear()}-${d.getMonth()}`;
+      if (prevMY !== null && my !== prevMY) {
+        const isYear = my.split("-")[0] !== prevMY.split("-")[0];
+        vlines.push(`<div class="gantt-vline ${isYear ? "year" : "month"}" style="left:${260 + w * pw}px"></div>`);
       }
+      prevMY = my;
+    }
+    if (pw >= 14 || w % 4 === 0) {
+      const lbl = d ? `W${isoWeek(d)}` : `W${w}`;
       headTicks.push(`<div class="gantt-tick" style="width:${pw}px">${lbl}</div>`);
     }
   }
@@ -623,6 +639,7 @@ async function renderTimeline(pid, c) {
     </div>
     <div class="gantt-wrap"><div class="gantt" style="min-width:${260 + (maxWeek + 1) * pw}px">
       <div class="gantt-head"><div class="gantt-label">Milestone</div><div style="display:flex">${headTicks.join("")}</div></div>
+      ${vlines.join("")}
       ${rows.join("")}${critLane}
     </div></div>
     <div id="ms-activities"></div>
