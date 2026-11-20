@@ -134,6 +134,13 @@ def milestone_due_date(contract_date, week_offset, module_idx=0, milestone_no=0)
     return (base + timedelta(weeks=week_offset + module_shift_weeks(milestone_no, module_idx))).isoformat()
 
 
+def due_date_for_week(contract_date, week_offset):
+    base = parse_date(contract_date)
+    if base is None:
+        return ""
+    return (base + timedelta(weeks=week_offset)).isoformat()
+
+
 def days_between(start, due):
     a, b = parse_date(start), parse_date(due)
     if a and b:
@@ -924,14 +931,14 @@ def list_projects():
     for p in rows:
         if not p["contract_date"]:
             continue
-        base = parse_date(p["contract_date"])
         for mno, label in ((9, "FAT"), (13, "Commissioning")):
             t = conn.execute("SELECT week_offset, due_date FROM timeline WHERE project_id = ? AND milestone_no = ?",
                              (p["id"], mno)).fetchone()
             if t:
-                due = t["due_date"] or (base + timedelta(weeks=t["week_offset"])).isoformat()
-                events.append({"project_id": p["id"], "project": p["name"], "kind": label,
-                               "date": due, "milestone_no": mno})
+                due = t["due_date"] or due_date_for_week(p["contract_date"], t["week_offset"])
+                if due:
+                    events.append({"project_id": p["id"], "project": p["name"], "kind": label,
+                                   "date": due, "milestone_no": mno})
     conn.close()
     return jsonify({"projects": rows_to_dicts(rows), "critical_opl": crit_opl,
                     "kpi": kpi, "events": events})
@@ -1167,13 +1174,12 @@ def gather_context(conn, pid=None):
         for p in ctx["projects"]:
             if not p["contract_date"]:
                 continue
-            base = parse_date(p["contract_date"])
             for mno in (9, 13, 14):
                 t = conn.execute(
                     "SELECT week_offset, due_date, done FROM timeline WHERE project_id=? AND milestone_no=?",
                     (p["id"], mno)).fetchone()
                 if t and not t["done"]:
-                    due = t["due_date"] or (base + timedelta(weeks=t["week_offset"])).isoformat()
+                    due = t["due_date"] or due_date_for_week(p["contract_date"], t["week_offset"])
                     ctx["upcoming_milestones"].append(
                         {"project": p["name"], "milestone_no": mno, "due": due})
         ctx["open_opl"] = rows_to_dicts(conn.execute(
